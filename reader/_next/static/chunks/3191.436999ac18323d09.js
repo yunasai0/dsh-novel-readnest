@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[3191],{3191:(e,a,s)=>{s.d(a,{shareFile:()=>h});var i=s(57275);async function h(e,a){await (0,i.lA)("plugin:sharekit|share_file",{url:e,...a})}}}]);

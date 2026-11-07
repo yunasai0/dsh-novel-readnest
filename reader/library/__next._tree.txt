@@ -1,0 +1,7 @@
+:HL["/novel-reader/_next/static/css/3b8703c38198dd4a.css","style"]
+:HL["/novel-reader/_next/static/css/1726b8eda6341cbf.css","style"]
+:HL["/novel-reader/study/fonts/font.css","style"]
+:HL["/novel-reader/study/private-study.css","style"]
+2:[["children",{"s":"__PAGE__","h":160}]]
+1:[["children",{"s":"library","h":64,"c":"$Q2"}]]
+0:{"b":"6qXHVpcSAvOi-XH8kH-GA","t":{"t":{"s":"","h":16,"c":"$Q1"}}}

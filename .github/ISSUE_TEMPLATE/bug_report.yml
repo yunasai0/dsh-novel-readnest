@@ -1,0 +1,34 @@
+name: 问题反馈
+description: 报告安装、阅读或 AI 功能问题
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: 插件与 DSH 版本
+      placeholder: dsh-readnest 0.2.0-beta.5 / DSH 0.2.1-rc.2
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 使用环境与安装方式
+      placeholder: Windows 11 / DSH Web / GitHub 标签安装
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 补充信息
+      description: 可附截图、脱敏日志或可公开的最小测试书籍。

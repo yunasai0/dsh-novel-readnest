@@ -1,0 +1,9 @@
+/docs/
+/dist/
+vendor/readest/apps/readest-app/out/
+**/node_modules/
+**/.next/
+**/.env.local
+**/.env.*.local
+**/.DS_Store
+**/*.tsbuildinfo

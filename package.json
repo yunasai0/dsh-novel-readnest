@@ -1,0 +1,72 @@
+{
+  "name": "dsh-readnest",
+  "version": "0.2.0-beta.5",
+  "description": "DSH ReadNest：基于 Readest 的本地小说阅读与书内 Agent 会话",
+  "license": "AGPL-3.0-or-later",
+  "author": "yunasai0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yunasai0/dsh-readnest.git"
+  },
+  "homepage": "https://github.com/yunasai0/dsh-readnest#readme",
+  "bugs": {
+    "url": "https://github.com/yunasai0/dsh-readnest/issues"
+  },
+  "keywords": ["dsh", "readest", "ebook", "epub", "novel", "agent"],
+  "type": "module",
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "dsh": "0.2.1-rc.2",
+    "node": ">=24"
+  },
+  "exports": {
+    ".": "./lib/host.mjs",
+    "./agent": "./lib/agent.mjs",
+    "./pruner": "./lib/pruner.mjs",
+    "./compaction": "./lib/compaction.mjs",
+    "./client": "./lib/client.cjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "files": ["lib", "reader", "cordis.patch.yml", "LICENSE", "NOTICE.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "pack:release": "node scripts/package.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-compaction": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-compaction": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "react": "19.2.8",
+    "tsdown": "^0.15.0",
+    "typescript": "^5.9.0"
+  }
+}

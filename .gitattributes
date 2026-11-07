@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Keep published build artifacts byte-identical on every Git checkout.
+/lib/** -text
+/reader/** -text

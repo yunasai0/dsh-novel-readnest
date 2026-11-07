@@ -1,0 +1,446 @@
+/* Styles recovered from the Private Study Readest build. */
+html[data-private-study='true'] {
+  --study-serif:
+    'Private Study Serif', 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
+  --study-line: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  --study-soft: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  --radius-box: 0.75rem;
+  --radius-field: 0.45rem;
+}
+html[data-private-study='true'] body {
+  background: var(--color-base-200);
+}
+html[data-private-study='true'] :is(h1, h2, .study-section-title, .tab-title) {
+  font-family: var(--study-serif);
+  letter-spacing: 0.035em;
+  font-weight: 500;
+}
+html[data-private-study='true'] :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+html[data-private-study='true']
+  :is(.modal-box, .dropdown-content, [data-radix-popper-content-wrapper] > *) {
+  border: 1px solid var(--study-line);
+  background-color: var(--color-base-100);
+  box-shadow: 0 12px 42px #0003;
+}
+html[data-private-study='true'] .modal-box {
+  background-image: none;
+  background-position: 50% 0.65rem;
+  background-repeat: no-repeat;
+  background-size: 110px;
+  padding-top: 2.6rem;
+}
+html[data-private-study='true'] .study-brand-artwork {
+  width: 5.5rem;
+  height: 5.5rem;
+  margin-bottom: 1rem;
+}
+html[data-private-study='true'] .bookshelf h2[data-shelf-id] {
+  color: var(--color-primary);
+  padding-top: 1rem;
+  padding-bottom: 0.7rem;
+  font-size: 1rem;
+}
+html[data-private-study='true'] [data-shelf-layout='list'] > div {
+  border-bottom: 1px solid var(--study-line);
+}
+html[data-private-study='true'] :is(.study-settings-group, .card) {
+  border-color: var(--study-line);
+  background-color: var(--color-base-100);
+}
+html[data-private-study='true'] .study-settings-row {
+  min-height: 3.6rem;
+  padding-block: 0.65rem;
+}
+html[data-private-study='true'] .study-section-title {
+  color: var(--color-primary);
+  padding-block: 0.4rem;
+}
+html[data-private-study='true'] .study-settings-label {
+  line-height: 1.65;
+}
+html[data-private-study='true']
+  :is(
+    .input,
+    .select,
+    .textarea,
+    input:not([type]),
+    input[type='text'],
+    input[type='email'],
+    input[type='password'],
+    input[type='url'],
+    input[type='number'],
+    textarea,
+    select
+  ) {
+  border-color: var(--study-line);
+  background-color: var(--color-base-200);
+  color: var(--color-base-content);
+  border-radius: 0.45rem;
+}
+html[data-private-study='true'] :is(.toggle, .checkbox, .radio, input[type='range']) {
+  accent-color: var(--color-primary);
+}
+html[data-private-study='true'] .range {
+  --range-bg: var(--study-line);
+  --range-thumb: var(--color-primary);
+}
+html[data-private-study='true'] :is(.btn-primary, .btn-contrast, .study-primary-button) {
+  color: #30200e;
+  box-shadow: none;
+  background: url(./button-plate.webp) 50% / 100% 210% no-repeat;
+  border-color: #0000;
+  min-height: 2.75rem;
+  padding-inline: 1.4rem;
+  font-weight: 500;
+}
+html[data-private-study='true'] :is(.btn-primary, .btn-contrast, .study-primary-button):disabled {
+  opacity: 0.45;
+}
+html[data-private-study='true'] :is(.btn-ghost, .menu-item, [role='menuitem']):hover {
+  background-color: var(--study-soft);
+}
+html[data-private-study='true'] .menu :is(li, summary, button) {
+  border-radius: 0.45rem;
+}
+html[data-private-study='true'] :is(.tab-active, .btn-active) {
+  color: var(--color-primary);
+  background-color: var(--study-soft);
+}
+html[data-private-study='true'] :is(.badge, kbd) {
+  border-color: var(--study-line);
+}
+html[data-private-study='true'] .dialog-tabs {
+  gap: 0.3rem;
+  height: auto;
+  min-height: 3.3rem;
+  padding-block: 0.4rem;
+}
+html[data-private-study='true'] .dialog-tabs > button {
+  flex-shrink: 0;
+  gap: 0.35rem;
+  height: auto;
+  min-height: 2.9rem;
+  padding: 0.35rem 0.6rem;
+}
+html[data-private-study='true'] .dialog-tabs > button > span:not(.study-artwork) {
+  font-size: 0.75rem;
+  display: inline;
+}
+html[data-private-study='true'] .study-subpage-header {
+  border-bottom: 1px solid var(--study-line);
+  padding-bottom: 1rem;
+}
+html[data-private-study='true'] .study-subpage-header > div {
+  font-family: var(--study-serif);
+}
+html[data-private-study='true'] :is(.header-bar, .footer-bar, .reader-header, .reader-footer) {
+  border-color: var(--study-line);
+}
+html[data-private-study='true'] :is(.header-title, .sidebar-header) {
+  font-family: var(--study-serif);
+}
+html[data-private-study='true'] .library-page {
+  background: var(--color-base-200);
+}
+html[data-private-study='true'] .library-page > [role='banner'] {
+  border-bottom: 1px solid var(--study-line);
+  padding-bottom: 0.5rem;
+}
+html[data-private-study='true'] .library-page .titlebar {
+  min-height: 3.6rem;
+}
+html[data-private-study='true'] .search-input {
+  border: 1px solid var(--study-line);
+  background: var(--color-base-100);
+  min-height: 2.3rem;
+}
+html[data-private-study='true'] .study-library-heading {
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 0.24rem;
+  padding: 0.5rem 1rem 0.8rem;
+  display: flex;
+}
+html[data-private-study='true'] .study-library-heading h1 {
+  font-size: clamp(1.6rem, 5vw, 2.15rem);
+  line-height: 1.25;
+}
+html[data-private-study='true'] .study-library-heading .study-artwork {
+  width: 10.75rem;
+  height: 3.25rem;
+}
+.study-library-eyebrow {
+  color: var(--color-primary);
+  font-size: 0.6rem;
+  letter-spacing: 0.21em;
+  text-transform: uppercase;
+}
+.study-library-subtitle {
+  color: var(--color-neutral-content);
+  font-family: var(--study-serif);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+}
+.study-bookshelf-intro {
+  padding: 1rem clamp(1rem, 3vw, 1.5rem) 0;
+}
+.study-continue {
+  max-width: 43rem;
+  margin-inline: auto;
+}
+.study-shelf-label {
+  color: var(--color-primary);
+  font-size: 1rem;
+  margin-block-end: 0.6rem;
+}
+.study-shelf-label i {
+  color: var(--color-neutral-content);
+  font-size: 0.76rem;
+  margin-inline-start: 0.38rem;
+}
+.study-continue-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: clamp(4.7rem, 25%, 7.75rem) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(0.85rem, 4vw, 1.55rem);
+  padding: clamp(0.75rem, 4vw, 1.3rem);
+  border: 1px solid var(--study-line);
+  border-radius: 0.5rem;
+  background: var(--color-base-100);
+}
+.study-continue-card:hover {
+  border-color: var(--color-primary);
+}
+.study-continue-cover {
+  aspect-ratio: 2 / 3;
+  border-radius: 0.2rem 0.35rem 0.35rem 0.2rem;
+  overflow: hidden;
+  box-shadow: 0 5px 18px #0003;
+}
+.study-continue-copy {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.study-continue-copy h3 {
+  font-family: var(--study-serif);
+  font-size: clamp(1.02rem, 3.1vw, 1.65rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.study-continue-author,
+.study-continue-progress {
+  color: var(--color-neutral-content);
+  font-size: 0.75rem;
+}
+.study-continue-progress progress {
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-block: 0.12rem 0.32rem;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--study-line);
+  color: var(--color-primary);
+}
+.study-continue-progress progress::-webkit-progress-bar {
+  background: var(--study-line);
+}
+.study-continue-progress progress::-webkit-progress-value {
+  background: var(--color-primary);
+}
+.study-continue-progress progress::-moz-progress-bar {
+  background: var(--color-primary);
+}
+.study-continue-progress > div {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.65rem;
+}
+.study-continue-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 0.35rem;
+  margin-block-start: 0.2rem;
+  font-family: var(--study-serif);
+}
+.study-continue-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.study-collection-label {
+  margin-block: 1.45rem 0.35rem;
+  border-block-end: 1px solid var(--study-line);
+  padding-block-end: 0.65rem;
+}
+html[data-eink='true'] .study-continue-cover {
+  box-shadow: none;
+}
+html[data-private-study='true'] .study-empty-state .study-artwork {
+  width: 7rem;
+  height: 7rem;
+  margin: 0 auto 1.4rem;
+}
+html[data-private-study='true'] .study-empty-state h1 {
+  font-size: clamp(1.6rem, 5vw, 2.2rem);
+  font-weight: 400;
+}
+html[data-private-study='true'] .study-empty-state p {
+  line-height: 1.9;
+}
+html[data-private-study='true'] .book-cover-container {
+  border-radius: 3px 7px 7px 3px;
+}
+html[data-private-study='true'] .fallback-cover {
+  color: #f1e3bd;
+  font-family: var(--study-serif);
+  text-shadow: 0 1px 2px #0008;
+  background: #17251c url(./cover.webp) 50% / cover no-repeat;
+  padding: 22% 17% 12%;
+}
+html[data-private-study='true'] .fallback-cover > div:last-child > span {
+  color: #dcca9d;
+}
+html[data-private-study='true'] .book-cover-container .fallback-cover {
+  border-radius: inherit;
+}
+html[data-private-study='true'] .book-item {
+  border-color: var(--study-line);
+}
+html[data-private-study='true'] .study-artwork {
+  vertical-align: middle;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  display: inline-flex;
+}
+html[data-private-study='true'] .study-artwork-image {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+}
+.study-artwork-fallback {
+  display: none;
+}
+html[data-private-study='true'] .study-hide-cover-art .fallback-cover {
+  background-image: none;
+  background-color: var(--color-base-100);
+  color: var(--color-base-content);
+  text-shadow: none;
+}
+html[data-private-study='true'] .study-hide-cover-art .fallback-cover > div:last-child > span {
+  color: inherit;
+}
+html[data-private-study='true'] .study-artwork[data-active='true'] {
+  background: var(--study-soft);
+  outline: 1px solid var(--color-primary);
+  border-radius: 5px;
+}
+html[data-private-study='true'] .study-reader-dock {
+  padding-top: 6px;
+  padding-inline: clamp(4px, calc((100% - 250px) / 2), 32px);
+}
+html[data-private-study='true'] .study-labeled-tool {
+  flex-direction: column;
+  flex: 1 1 0;
+  gap: 2px;
+  width: auto;
+  min-width: 0;
+  min-height: 50px;
+  height: 50px;
+}
+html[data-private-study='true'] .study-labeled-tool .study-artwork {
+  width: 22px;
+  height: 22px;
+}
+html[data-private-study='true'] .study-tool-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  flex: none;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 13px;
+  overflow: hidden;
+}
+html[data-private-study='true'] :is(.toast, [role='alert']) {
+  border-color: var(--study-line);
+}
+@media (max-width: 640px) {
+  html[data-private-study='true'] .modal-box {
+    border-radius: 1.2rem 1.2rem 0.5rem 0.5rem;
+  }
+  html[data-private-study='true']
+    .settings-content
+    :is(
+      input[type='text'],
+      input[type='email'],
+      input[type='password'],
+      input[type='url'],
+      textarea,
+      select
+    ) {
+    font-size: 16px;
+  }
+  html[data-private-study='true'] .dialog-tabs {
+    padding-inline: 0.25rem;
+  }
+  html[data-private-study='true'] .study-library-heading {
+    padding-top: 0.35rem;
+  }
+  html[data-private-study='true'] .study-library-heading h1 {
+    font-size: clamp(1.55rem, 6vw, 1.9rem);
+  }
+}
+html[data-private-study='true'][data-eink='true']
+  :is(
+    .modal-box,
+    .dropdown-content,
+    .fallback-cover,
+    .btn-primary,
+    .btn-contrast,
+    .study-primary-button
+  ) {
+  box-shadow: none;
+  background-image: none;
+}
+html[data-private-study='true'][data-eink='true'] .fallback-cover {
+  color: var(--color-base-content);
+  background-color: var(--color-base-100);
+  text-shadow: none;
+}
+html[data-private-study='true'][data-eink='true'] .fallback-cover > div:last-child > span {
+  color: inherit;
+}
+html[data-private-study='true'][data-eink='true']
+  :is(.btn-primary, .btn-contrast, .study-primary-button) {
+  background: var(--color-base-content);
+  color: var(--color-base-100);
+}
+html[data-private-study='true'][data-eink='true'] .study-artwork-image {
+  display: none;
+}
+html[data-private-study='true'][data-eink='true'] .study-artwork-fallback {
+  display: inline-flex;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-private-study='true'] :is(button, a, .modal-box, .dropdown-content) {
+    transition: none;
+  }
+}

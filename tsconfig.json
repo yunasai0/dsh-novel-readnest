@@ -1,0 +1,21 @@
+{
+  "extends": "./vendor/readest/apps/readest-app/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noImplicitReturns": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": false,
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src",
+    "vendor/readest/apps/readest-app/next-env.d.ts",
+    "vendor/readest/apps/readest-app/raw-loader.d.ts",
+    "vendor/readest/apps/readest-app/pdfjs.d.ts"
+  ]
+}
