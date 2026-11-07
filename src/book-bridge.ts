@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  chapterBookBatchBudget, nearBookBatchBudget, roundBookBudget, type BookPoint, type BookQuery, type BookRequest,
+  chapterBookBatchBudget, companionRequestBodyLimit, nearBookBatchBudget, roundBookBudget,
+  type BookPoint, type BookQuery, type BookRequest,
   type BookResult, type ReaderResult, type ReadingSnapshot,
 } from './protocol.js';
 import { customPersonaPrompt } from './persona.js';
@@ -12,6 +13,7 @@ interface Prepared {
   snapshot: ReadingSnapshot;
   protectedReading: boolean;
   persona?: string;
+  personaRemaining: number;
   expires: number;
 }
 interface Active extends Prepared {
@@ -123,7 +125,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       if (reader?.active) return reader.active.persona;
       // DSH assembles its system prompt before the pre-step hook admits the prepared turn.
       const prepared = reader?.prepared;
-      return prepared && prepared.expires >= Date.now() ? prepared.persona : undefined;
+      return prepared && !prepared.personaRemaining && prepared.expires >= Date.now() ? prepared.persona : undefined;
     },
     book(session: string) {
       return live(session)?.book;
@@ -135,7 +137,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       const prepared = reader.prepared;
       const pending = prepared?.id === request && prepared.expires >= Date.now()
         ? prepared : retry ? reader.retry : undefined;
-      if (!pending || (reader.protectedReading && !pending.protectedReading)) return;
+      if (!pending || pending.personaRemaining || (reader.protectedReading && !pending.protectedReading)) return;
       if (pending === prepared) reader.prepared = undefined;
       reader.retry = pending;
       reader.active = { ...pending, turn, used: 0 };
@@ -209,7 +211,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       }
       let body;
       try {
-        const text = await readLimitedBody(req, 64 * 1024);
+        const text = await readLimitedBody(req, companionRequestBodyLimit);
         if (!text) {
           if (text === null) res.shouldKeepAlive = false;
           json(res, 413, null);
@@ -237,6 +239,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
         return;
       }
       reader.lastSeen = Date.now();
+      if (reader.prepared && reader.prepared.expires < reader.lastSeen) reader.prepared = undefined;
       if (op === 'close') {
         clearReader(reader);
         readers.delete(session);
@@ -257,11 +260,13 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       }
       if (op === 'prepare') {
         const snapshot = snapshotOf(body.snapshot);
-        if (!snapshot || typeof id !== 'string' || !identity.test(id)) {
+        const personaRemaining = body.personaLength ?? 0;
+        if (!snapshot || typeof id !== 'string' || !identity.test(id) ||
+          !integer(personaRemaining) || (personaRemaining > 0 && body.persona !== undefined)) {
           json(res, 400, { message: unavailable.message });
           return;
         }
-        if (reader.active || (reader.prepared && reader.prepared.id !== id && reader.prepared.expires > Date.now())) {
+        if (reader.active || (reader.prepared && reader.prepared.id !== id)) {
           json(res, 409, { message: '本书上一条消息仍在处理，请稍候。' });
           return;
         }
@@ -271,8 +276,23 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
           return;
         }
         reader.prepared = {
-          id, snapshot, protectedReading, persona: customPersonaPrompt(body.persona), expires: Date.now() + 90_000,
+          id, snapshot, protectedReading, persona: customPersonaPrompt(body.persona), personaRemaining,
+          expires: Date.now() + 90_000,
         };
+        json(res, 200, null);
+        return;
+      }
+      if (op === 'persona-chunk') {
+        const prepared = reader.prepared;
+        const { chunk, offset } = body;
+        if (!prepared || prepared.id !== id || typeof chunk !== 'string' || !chunk.length ||
+          chunk.length > prepared.personaRemaining || offset !== (prepared.persona?.length ?? 0)) {
+          json(res, 409, null);
+          return;
+        }
+        prepared.persona = (prepared.persona ?? '') + chunk;
+        prepared.personaRemaining -= chunk.length;
+        prepared.expires = Date.now() + 90_000;
         json(res, 200, null);
         return;
       }

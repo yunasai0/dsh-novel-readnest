@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { readerPath } from './path.js';
 import {
-  companionChannel, companionEndpoint, companionPreset,
+  companionChannel, companionEndpoint, companionPreset, companionRequestBodyLimit,
   type BookRequest, type ReaderBook, type ReaderResult, type ReadingSnapshot,
 } from './protocol.js';
 import { companionStyle } from './companion-style.js';
@@ -14,6 +14,8 @@ import {
 } from './persona.js';
 
 export const conversationSlot = 'novel-reader.conversation';
+// Keep fallback requests below 64 KiB after JSON escaping.
+const personaChunkLength = 8_000;
 
 interface SessionFace {
   rename(title: string): Promise<{ ok: boolean }>;
@@ -167,14 +169,16 @@ function NativeSession({
     const instance = crypto.randomUUID();
     let owned: SessionReference | undefined;
     let restore: (() => void) | undefined;
+    const requestBody = (op: string, fields: Record<string, unknown>) =>
+      JSON.stringify({ op, book, session: entry.id, token: entry.token, instance, ...fields });
     const post = async (op: string, fields: Record<string, unknown> = {}, abort = signal) => {
       const response = await fetch(companionEndpoint, {
         method: 'POST', signal: abort, headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ op, book, session: entry.id, token: entry.token, instance, ...fields }),
+        body: requestBody(op, fields),
       });
       if (op === 'reply' && response.status === 404) return null;
       if (op === 'prepare' && !response.ok) {
-        const value = await response.json() as { message?: string };
+        const value = await response.json().catch(() => null) as { message?: string } | null;
         return { rejected: response.status, message: value?.message };
       }
       if (!response.ok) throw new Error('阅读器桥接请求失败（' + response.status + '）');
@@ -219,20 +223,36 @@ function NativeSession({
           }
           setSendError(undefined);
           await updateProtection();
+          const persona = captured.persona;
+          const preparation = { id, snapshot, protectedReading: captured.protectedReading };
+          let uploadPersona = persona && new Blob([requestBody('prepare', { ...preparation, persona })]).size >
+            companionRequestBodyLimit ? persona : undefined;
           for (;;) {
             abort.throwIfAborted();
             const result = await post('prepare', {
-              id, snapshot, protectedReading: captured.protectedReading, persona: captured.persona,
+              ...preparation,
+              ...(uploadPersona ? { personaLength: uploadPersona.length } : { persona }),
             }, abort);
             if (!result?.rejected) {
               prepared = true;
               break;
+            }
+            if (result.rejected === 413 && persona && !uploadPersona) {
+              uploadPersona = persona;
+              continue;
             }
             if (result.rejected !== 409) {
               setSendError({ message: result.message ?? '无法准备阅读上下文。', history: result.rejected === 412 });
               throw new Error(result.message ?? '无法准备阅读上下文');
             }
             await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+          if (uploadPersona) {
+            for (let offset = 0; offset < uploadPersona.length; offset += personaChunkLength) {
+              await post('persona-chunk', {
+                id, offset, chunk: uploadPersona.slice(offset, offset + personaChunkLength),
+              }, abort);
+            }
           }
           const result = await originalPrompt.call(this, content, mode, abort, id);
           accepted = result.ok;

@@ -5,7 +5,6 @@ import {
   defaultPersonaId,
   fixedNovelRules,
   personaNameLimit,
-  personaPromptLimit,
   personaStorageKey,
   readNovelPersonaSettings,
   selectedNovelPersona,
@@ -151,12 +150,10 @@ export default function AgentPersonaPanel() {
               <textarea
                 className='textarea min-h-36 w-full'
                 value={draft.prompt}
-                maxLength={personaPromptLimit}
                 placeholder='描述希望 Agent 使用的语气、回答方式和讨论重点。'
                 onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
               />
             </label>
-            <p className='text-base-content/60 text-end text-xs'>{draft.prompt.length} / {personaPromptLimit}</p>
             <div className='flex flex-wrap justify-end gap-2'>
               {draft.id && draft.id !== defaultPersonaId && !confirmDelete && (
                 <button type='button' className='btn btn-ghost btn-sm text-error me-auto'

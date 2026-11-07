@@ -1,6 +1,7 @@
 export const companionChannel = 'readest-companion-v1';
 export const companionPreset = 'readest-companion';
 export const companionEndpoint = '/novel-reader/companion-bridge';
+export const companionRequestBodyLimit = 32 * 1024 * 1024;
 export const nearBookBatchBudget = 3_000;
 export const chapterBookBatchBudget = 10_000;
 export const roundBookBudget = 30_000;

@@ -4,4 +4,4 @@
 :HL["/novel-reader/study/private-study.css","style"]
 2:[["children",{"s":"__PAGE__","h":160}]]
 1:[["children",{"s":"gdrive-callback","h":64,"c":"$Q2"}]]
-0:{"b":"6qXHVpcSAvOi-XH8kH-GA","t":{"t":{"s":"","h":16,"c":"$Q1"}}}
+0:{"b":"JoaVngDIiG2P--5BIX8Ba","t":{"t":{"s":"","h":16,"c":"$Q1"}}}

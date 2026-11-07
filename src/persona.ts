@@ -14,7 +14,6 @@ export const defaultNovelPersona = [
 
 export const defaultPersonaId = 'default';
 export const personaStorageKey = 'dsh.novel-reader.personas';
-export const personaPromptLimit = 4_000;
 export const personaNameLimit = 60;
 
 export interface NovelPersona {
@@ -29,8 +28,7 @@ export interface NovelPersonaSettings {
 }
 
 export function customPersonaPrompt(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length <= personaPromptLimit && value.trim()
-    ? value : undefined;
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 export function assembleNovelPrompt(persona?: string) {
