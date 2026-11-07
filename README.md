@@ -54,7 +54,7 @@ dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.7"
 
 ### DSH 桌面版
 
-在 Windows 或 macOS 桌面版的「插件 → 添加插件」中填写下列 GitHub 地址，安装并启用。`v0.2.0-beta.7` 已在 macOS 桌面版实测，可正常安装和使用。
+`v0.2.0-beta.7` 已在 Windows 和 macOS 官方桌面版实测，可正常安装和使用。在「插件 → 添加插件」中填写下列 GitHub 地址，安装并启用。
 
 ```text
 https://github.com/yunasai0/dsh-novel-readnest
@@ -93,10 +93,9 @@ https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.7/d
 | --- | --- |
 | Windows DSH Web `0.2.1-rc.2` | 已验证 TXT、EPUB、续读、Agent 查章、防剧透、朗读及人设切换 |
 | Windows DSH Web `0.2.2-rc.1` | 已验证安装、TXT 导入、打开正文和创建 AI 会话 |
-| Windows 官方桌面版 | 通用包早期版本已验证导入、续读、Agent 与朗读，本版待复测 |
+| Windows 官方桌面版 | `v0.2.0-beta.7` 已实测可正常安装和使用 |
 | macOS 官方桌面版 `0.2.2-rc.1` | `v0.2.0-beta.7` 已实测可正常安装和使用 |
 | 手机端 | 已在手机真机上验证可正常使用 |
-| Linux 宿主 | 待实测 |
 
 ## 源码与构建
 
