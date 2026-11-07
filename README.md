@@ -42,12 +42,12 @@
 
 ## 安装
 
-需要官方 DSH `0.2.1-rc.2`。插件包包含预构建模块与阅读页面，安装后由 DSH 直接加载。
+支持官方 DSH `0.2.1` 系列（从 `0.2.1-rc.2` 起）及 `0.2.2-rc.1`。插件包包含预构建模块与阅读页面，安装后由 DSH 直接加载。
 
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.6"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.7"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -63,7 +63,7 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.6/dsh-novel-readnest-0.2.0-beta.6.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.7/dsh-novel-readnest-0.2.0-beta.7.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
@@ -92,6 +92,7 @@ https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.6/d
 | 环境 | 验证情况 |
 | --- | --- |
 | Windows DSH Web `0.2.1-rc.2` | 已验证 TXT、EPUB、续读、Agent 查章、防剧透、朗读及人设切换 |
+| Windows DSH Web `0.2.2-rc.1` | 已验证安装、TXT 导入、打开正文和创建 AI 会话 |
 | Windows 官方桌面版 | 通用包早期版本已验证导入、续读、Agent 与朗读，本版待复测 |
 | 手机浏览器 | 已验证窄屏布局，移动真机待测试 |
 | macOS、Linux 宿主 | 待实测 |
