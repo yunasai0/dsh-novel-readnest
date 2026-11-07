@@ -1,8 +1,8 @@
-# DSH ReadNest
+# DSH Novel ReadNest
 
 基于 Readest 的 DSH 小说阅读插件，将本地书库、阅读器和书内 AI 会话放在一起。
 
-[![Release](https://img.shields.io/github/v/release/yunasai0/dsh-readnest?include_prereleases)](https://github.com/yunasai0/dsh-readnest/releases)
+[![Release](https://img.shields.io/github/v/release/yunasai0/dsh-novel-readnest?include_prereleases)](https://github.com/yunasai0/dsh-novel-readnest/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 ## 功能
@@ -21,7 +21,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-readnest#v0.2.0-beta.5"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.6"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -31,16 +31,16 @@ dsh plugin --profile web add "github:yunasai0/dsh-readnest#v0.2.0-beta.5"
 在桌面版的「插件 → 添加插件」中填写下列 GitHub 地址，安装并启用。
 
 ```text
-https://github.com/yunasai0/dsh-readnest
+https://github.com/yunasai0/dsh-novel-readnest
 ```
 
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-readnest/releases/download/v0.2.0-beta.5/dsh-readnest-0.2.0-beta.5.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.6/dsh-novel-readnest-0.2.0-beta.6.tgz
 ```
 
-下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-readnest/releases)。
+下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 手机和平板
 
@@ -61,7 +61,7 @@ https://github.com/yunasai0/dsh-readnest/releases/download/v0.2.0-beta.5/dsh-rea
 
 更新本插件时，在原 DSH 配置中添加新版 GitHub 地址或 Release 包，并按提示重启服务。
 
-早期本地测试包使用过 `dsh-novel-reader` 名称。从本项目的早期测试版迁移时，应先在原配置中移除旧包，再安装 `dsh-readnest`，避免同时加载两个阅读器。沿用相同的 DSH 数据目录和 Web 地址，可以继续使用已有书库与会话。
+从本项目的 `dsh-readnest` 或早期本地测试包 `dsh-novel-reader` 迁移时，请在原 DSH 配置中移除已安装的旧包，再安装 `dsh-novel-readnest`。沿用原 DSH 数据目录和 Web 地址即可继续使用已有书库与会话。
 
 朗读、外部词典和翻译依赖对应服务的可用性。AI 对话使用 DSH 中配置的模型与服务商。
 
@@ -96,7 +96,7 @@ npm run pack:release
 
 发布脚本在 `dist/` 中生成带版本号的 `.tgz` 和 `.tgz.sha256`。GitHub 直装所需的 `lib/` 与 `reader/` 随源码提交。
 
-构建、贡献与发布约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。问题和建议请提交到 [Issues](https://github.com/yunasai0/dsh-readnest/issues)。
+构建、贡献与发布约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。问题和建议请提交到 [Issues](https://github.com/yunasai0/dsh-novel-readnest/issues)。
 
 ## 许可证与致谢
 

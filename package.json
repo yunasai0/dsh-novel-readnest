@@ -1,16 +1,16 @@
 {
-  "name": "dsh-readnest",
-  "version": "0.2.0-beta.5",
-  "description": "DSH ReadNest：基于 Readest 的本地小说阅读与书内 Agent 会话",
+  "name": "dsh-novel-readnest",
+  "version": "0.2.0-beta.6",
+  "description": "DSH Novel ReadNest：基于 Readest 的本地小说阅读与书内 Agent 会话",
   "license": "AGPL-3.0-or-later",
   "author": "yunasai0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yunasai0/dsh-readnest.git"
+    "url": "git+https://github.com/yunasai0/dsh-novel-readnest.git"
   },
-  "homepage": "https://github.com/yunasai0/dsh-readnest#readme",
+  "homepage": "https://github.com/yunasai0/dsh-novel-readnest#readme",
   "bugs": {
-    "url": "https://github.com/yunasai0/dsh-readnest/issues"
+    "url": "https://github.com/yunasai0/dsh-novel-readnest/issues"
   },
   "keywords": ["dsh", "readest", "ebook", "epub", "novel", "agent"],
   "type": "module",

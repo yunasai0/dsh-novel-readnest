@@ -3,7 +3,7 @@ import {
   conversationSlot, NovelConversation, ReaderPanel, type PanelSlots, type SessionServices,
 } from './companion-panel.js';
 
-const id = 'dsh-readnest';
+const id = 'dsh-novel-readnest';
 
 interface Slots {
   inject(name: string, mount: () => () => void): () => void;

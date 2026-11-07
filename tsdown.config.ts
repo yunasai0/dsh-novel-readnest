@@ -30,7 +30,7 @@ export default defineConfig([
     fixedExtension: true,
     clean: false,
     banner:
-      'window.__ModuleLoader__.load({ id: "dsh-readnest", factory(require) { const module = { exports: {} }; const exports = module.exports;',
+      'window.__ModuleLoader__.load({ id: "dsh-novel-readnest", factory(require) { const module = { exports: {} }; const exports = module.exports;',
     footer: 'return module.exports; } });',
   },
 ]);

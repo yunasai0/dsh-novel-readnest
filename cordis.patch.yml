@@ -1,6 +1,6 @@
 - insert:
-    - id: dsh-readnest
-      name: dsh-readnest
+    - id: dsh-novel-readnest
+      name: dsh-novel-readnest
     - id: preset-readest-companion
       name: '@deepseek-ai/dsh-agent-preset'
       config:
@@ -9,7 +9,7 @@
         description: 在阅读器中提问和查阅当前书籍
         plugins:
           - id: novel-reader-tool
-            name: dsh-readnest/agent
+            name: dsh-novel-readnest/agent
           - id: companion-compaction
             name: cordis:group
             group: true
@@ -18,12 +18,12 @@
               toolResultPruner: true
             config:
               - id: tool-result-pruner
-                name: dsh-readnest/pruner
+                name: dsh-novel-readnest/pruner
                 config:
                   thresholdChars: 6000
                   headChars: 1200
                   tailChars: 600
               - id: compaction-basic
-                name: dsh-readnest/compaction
+                name: dsh-novel-readnest/compaction
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'

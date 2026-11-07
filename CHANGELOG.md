@@ -1,5 +1,10 @@
 # 版本更新
 
+## 0.2.0-beta.6 · 2026-11-07
+
+- 公开名称改为 DSH Novel ReadNest，便于按小说阅读搜索。包名和 GitHub 仓库名同步改为 `dsh-novel-readnest`。
+- 从 `dsh-readnest` 升级时，请在同一 DSH 配置中移除旧包，再安装新版。沿用原 DSH 数据目录和 Web 地址即可继续使用已有书库与会话。
+
 ## 0.2.0-beta.5 · 2026-11-07
 
 - 以 DSH ReadNest 名称首次公开发布，包名为 `dsh-readnest`。

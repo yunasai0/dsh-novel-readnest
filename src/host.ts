@@ -102,7 +102,7 @@ async function speech(req: IncomingMessage, res: ServerResponse, url: URL) {
   await sendResponse(await edgeSpeechResponse(request, true), res);
 }
 
-export const name = 'dsh-readnest';
+export const name = 'dsh-novel-readnest';
 export const inject = ['webServer', 'connection', 'agents'];
 
 export function apply(ctx: HostContext) {
@@ -152,7 +152,7 @@ export function apply(ctx: HostContext) {
         await serveAsset(path, req, res);
       } catch (error) {
         if (res.destroyed) return;
-        console.error('[dsh-readnest]', error);
+        console.error('[dsh-novel-readnest]', error);
         if (!res.headersSent) res.writeHead(error instanceof URIError ? 400 : 500);
         res.end();
       }

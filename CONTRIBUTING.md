@@ -32,7 +32,7 @@ pnpm run build
 npm run pack:release
 ```
 
-打包脚本会生成 `dist/dsh-readnest-<版本>.tgz` 与对应的 SHA256 文件。检查包中的版本、入口和静态资源，再用独立配置安装验证。
+打包脚本会生成 `dist/dsh-novel-readnest-<版本>.tgz` 与对应的 SHA256 文件。检查包中的版本、入口和静态资源，再用独立配置安装验证。
 
 GitHub 直装使用预构建资源，发布提交应包含 `src/`、`vendor/`、`lib/`、`reader/` 和构建配置。根目录 `docs/` 用于本地设计材料，已列入忽略规则，发布提交与标签均排除该目录。
 
