@@ -110,7 +110,7 @@ export function apply(ctx: HostContext) {
     const bridge = createBookBridge((id, book, snapshot) => {
       const agent = ctx.agents.get(id);
       return !!agent && historyConflict(agent.session, book, snapshot);
-    });
+    }, (id) => ctx.agents.get(id)?.session);
     ctx.provide('novelReader', bridge);
 
     const handleReaderRequest = async (req: IncomingMessage, res: ServerResponse) => {

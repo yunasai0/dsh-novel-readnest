@@ -122,6 +122,7 @@ export type BookMediaSource =
   | { path: string; entry: string };
 
 export interface BookDoc {
+  novelIndex?: import('@/services/novel/novelIndex').NovelIndex;
   metadata: BookMetadata;
   rendition: {
     layout?: 'pre-paginated' | 'reflowable';
@@ -201,6 +202,8 @@ export const MIMETYPES: Record<BookFormat, string[]> = {
 };
 
 export interface DocumentLoaderOptions {
+  /** Generated TXT XHTML, reused once during import instead of immediately inflating it again. */
+  transientText?: Map<string, string>;
   /**
    * Absolute filesystem path of `file`, used by Tauri builds to invoke the
    * Rust EPUB pre-parser (`parse_epub_full`). When omitted (web platform,
@@ -316,11 +319,13 @@ const isImageArchive = (entries: { filename: string; directory?: boolean }[]) =>
 export class DocumentLoader {
   private file: File;
   private nativeFilePath?: string;
+  private transientText?: Map<string, string>;
   private widePages?: WidePagesOptions;
 
   constructor(file: File, options: DocumentLoaderOptions = {}) {
     this.file = file;
     this.nativeFilePath = options.nativeFilePath;
+    this.transientText = options.transientText;
     this.widePages = options.widePages;
   }
 
@@ -510,13 +515,16 @@ export class DocumentLoader {
       return wrapped;
     };
 
-    const loadText = textCache
-      ? (name: string, ...args: [string?]) => {
-          const cached = textCache.get(name);
-          if (cached !== undefined) return Promise.resolve(cached);
-          return dedupedZipLoadText(name, ...args);
-        }
-      : dedupedZipLoadText;
+    const loadText = (name: string, ...args: [string?]) => {
+      const generated = this.transientText?.get(name);
+      if (generated !== undefined) {
+        this.transientText!.delete(name);
+        return Promise.resolve(generated);
+      }
+      const cached = textCache?.get(name);
+      if (cached !== undefined) return Promise.resolve(cached);
+      return dedupedZipLoadText(name, ...args);
+    };
 
     const getSize = sizesOverride
       ? (name: string) => sizesOverride.get(name) ?? getEntry(name)?.uncompressedSize ?? 0

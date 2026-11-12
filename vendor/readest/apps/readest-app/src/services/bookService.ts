@@ -42,6 +42,8 @@ import { isContentURI, isValidURL, makeSafeFilename } from '@/utils/misc';
 import { deserializeConfig, serializeConfig, serializeRawConfig } from '@/utils/serializer';
 import { ClosableFile } from '@/utils/file';
 import { TxtToEpubConverter } from '@/utils/txt';
+import { isDshReader } from '@/services/dshReader';
+import { setNovelPreparation } from '@/services/novel/preparationProgress';
 import { svg2png } from '@/utils/svg';
 import { normalizeMetadataIsbn } from '@/utils/isbn';
 import { BookFileNotFoundError } from './errors';
@@ -568,7 +570,14 @@ export async function importBook(
   const isPseStream = typeof file === 'string' && isPseStreamFileName(file);
 
   let loadedBook: BookDoc | undefined;
+  const progressId = isDshReader() ? 'import-' + crypto.randomUUID() : undefined;
+  const progressTitle = getFilename(typeof file === 'string' ? file : file.name);
+  const reportProgress = (phase: 'reading' | 'converting' | 'indexing' | 'saving', completed?: number, total?: number) => {
+    if (progressId) setNovelPreparation(progressId, { title: progressTitle, kind: 'import', phase, completed, total });
+  };
+  reportProgress('reading');
   let fileobj: File | undefined;
+  let convertedText: Map<string, string> | undefined;
   // TXT conversion replaces `fileobj` with a plain in-memory EPUB File. Track
   // the opened RemoteFile/NativeFile so we can close it right after convert
   // (and still in outer `finally` for non-TXT ClosableFile paths).
@@ -615,9 +624,18 @@ export async function importBook(
           openedSource = maybeClosable;
         }
         if (/\.txt$/i.test(filename)) {
-          const txt2epub = new TxtToEpubConverter();
+          reportProgress('converting');
           try {
-            ({ file: fileobj } = await txt2epub.convert({ file: fileobj }));
+            if (progressId && fileobj instanceof File) {
+              const { convertTxtToEpubWithFallback } = await import('@/utils/txt-worker');
+              const converted = await convertTxtToEpubWithFallback({ file: fileobj, prefetchText: true,
+                onProgress: ({ completed, total }) => reportProgress('converting', completed, total),
+              });
+              fileobj = converted.file;
+              if (converted.prefetchedText) convertedText = new Map(Object.entries(converted.prefetchedText));
+            } else {
+              ({ file: fileobj } = await new TxtToEpubConverter().convert({ file: fileobj }));
+            }
           } finally {
             // Convert consumes the source; release RemoteFile/NativeFile
             // immediately so DocumentLoader / cover / write do not keep the
@@ -724,7 +742,7 @@ export async function importBook(
           loadedBook = nativeBookDoc;
           format = nativeFormat;
         } else {
-          ({ book: loadedBook, format } = await new DocumentLoader(fileobj).open());
+          ({ book: loadedBook, format } = await new DocumentLoader(fileobj, { transientText: convertedText }).open());
         }
       }
       if (!loadedBook) {
@@ -907,6 +925,12 @@ export async function importBook(
     // the loser fails with "Cannot create a file when that file already exists"
     // (Sentry READEST-H). create_dir_all is a no-op when the dir exists.
     await fs.createDir(getDir(book), 'Books', true);
+    if (isDshReader() && format === 'EPUB' && loadedBook.rendition?.layout !== 'pre-paginated') {
+      const { prepareNovelIndex } = await import('@/services/novel/novelIndex');
+      reportProgress('indexing');
+      await prepareNovelIndex(fs, loadedBook, hash, (completed, total) => reportProgress('indexing', completed, total));
+    }
+    reportProgress('saving');
     const bookFilename = getLocalBookFilename(book);
     const willWriteBookFile =
       saveBook &&
@@ -1157,6 +1181,8 @@ export async function importBook(
     console.error('Error importing book:', error);
     throw error;
   } finally {
+    if (progressId) setNovelPreparation(progressId, null);
+    convertedText?.clear();
     // Release the parsed document (a PDF leaks its pdf.js worker otherwise,
     // ~60 MB per imported file — #5387) and the opened file handle.
     try {

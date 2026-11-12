@@ -9,11 +9,13 @@ const workerContext: DedicatedWorkerGlobalScope = self as unknown as DedicatedWo
 workerContext.onmessage = async (event: MessageEvent<TxtConverterWorkerRequest>) => {
   if (event.data.type !== 'convert') return;
 
-  const { file, author, language } = event.data.payload;
+  const { file, author, language, prefetchText } = event.data.payload;
 
   try {
     const converter = new TxtToEpubConverter();
-    const result = await converter.convert({ file, author, language });
+    const result = await converter.convert({ file, author, language, prefetchText,
+      onProgress: (payload) => workerContext.postMessage({ type: 'progress', payload } satisfies TxtConverterWorkerResponse),
+    });
     const epubBuffer = await result.file.arrayBuffer();
     const response: TxtConverterWorkerResponse = {
       type: 'success',
@@ -23,6 +25,7 @@ workerContext.onmessage = async (event: MessageEvent<TxtConverterWorkerRequest>)
         bookTitle: result.bookTitle,
         chapterCount: result.chapterCount,
         language: result.language,
+        ...(result.prefetchedText ? { prefetchedText: result.prefetchedText } : {}),
       },
     };
     workerContext.postMessage(response, [epubBuffer]);

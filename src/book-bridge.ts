@@ -1,208 +1,298 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import {
-  chapterBookBatchBudget, companionRequestBodyLimit, nearBookBatchBudget, roundBookBudget,
-  type BookPoint, type BookQuery, type BookRequest,
-  type BookResult, type ReaderResult, type ReadingSnapshot,
-} from './protocol.js';
+import { companionRequestBodyLimit, roundBookBudget, type BookPoint, type BookPoll, type BookQuery,
+  type BookRequest, type BookResult, type BookToolQuery, type ReadTask, type ReaderResult,
+  type ReadingProvenance, type ReadingSnapshot, type SyncState } from './protocol.js';
 import { customPersonaPrompt } from './persona.js';
 import { readLimitedBody } from './request-body.js';
+import { compareBookPoints, isBookPoint, spoilerBoundaryOf } from './reading-progress.js';
+import { clipBookRanges, countTextCharacters, mergeBookRanges, subtractBookRanges, validBookRange } from './reading-ranges.js';
+import { budgetNotice, directoryRecovery, novelError, syncRecovery } from './novel-errors.js';
+import { readingSyncState, recoverReadTask } from './sync-history.js';
+import type { NovelSession } from './reading-history.js';
+export { compareBookPoints, isBookPoint } from './reading-progress.js';
 
 interface Prepared {
-  id: string;
-  snapshot: ReadingSnapshot;
-  protectedReading: boolean;
-  persona?: string;
-  personaRemaining: number;
-  expires: number;
+  id: string; snapshot: ReadingSnapshot; protectedReading: boolean; persona?: string;
+  personaRemaining: number; expires: number;
 }
 interface Active extends Prepared {
-  turn: number;
-  used: number;
+  turn: number; used: number; state: SyncState; queue: Promise<void>;
+  calls: Map<string, { key: string; result: Promise<ToolResult> }>;
 }
-interface Pending {
-  request: BookRequest;
-  delivered: boolean;
-  finish(result: ReaderResult): void;
-}
+interface Pending { request: BookRequest; delivered: boolean; finish(result: ReaderResult): void }
 interface Reader {
-  book: string;
-  token: string;
-  instance: string;
-  protectedReading: boolean;
-  lastSeen: number;
-  prepared?: Prepared;
-  active?: Active;
-  retry?: Prepared;
-  pending: Map<string, Pending>;
-  cursors: Map<string, { query: BookQuery; snapshot: ReadingSnapshot; resume: BookPoint; boundary?: BookPoint }>;
-  poll?: (request: BookRequest | null) => void;
+  book: string; token: string; instance: string; indexVersion: number;
+  protectedReading: boolean; lastSeen: number; prepared?: Prepared; active?: Active; retry?: Prepared;
+  pending: Map<string, Pending>; cursors: Map<string, ReadTask>;
+  poll?: (request: BookPoll | null) => void;
 }
-export type ToolResult = BookResult & { source?: { book: string; point?: BookPoint } };
-
-const unavailable: ReaderResult = { status: 'unavailable', message: '阅读器位置不可用，请回到当前书籍的 AI 面板重试。' };
+export type ToolResult = BookResult & { source?: ReadingProvenance };
 const identity = /^[a-zA-Z0-9_-]{8,160}$/;
-export const compareBookPoints = (a: BookPoint, b: BookPoint) => a.section - b.section || a.offset - b.offset;
-
+const unavailable = () => novelError('READER_DISCONNECTED', '当前书籍的阅读器连接不可用。',
+  '请重新打开当前书籍的 AI 面板后再调用工具。');
+const canceled = () => novelError('READ_CANCELED', '本次读取已取消，未推进同步进度。',
+  '需要继续时重新发起当前读取或 sync_reading。', { next_call: syncRecovery });
+const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 function json(res: ServerResponse, status: number, value: unknown) {
   if (!res.destroyed && !res.writableEnded) {
     res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(value));
   }
 }
-const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-export function isBookPoint(value: unknown): value is BookPoint {
-  return !!value && typeof value === 'object' && 'section' in value && 'offset' in value
-    && integer(value.section) && integer(value.offset);
-}
 function snapshotOf(value: unknown): ReadingSnapshot | undefined {
-  if (!value || typeof value !== 'object') return;
-  const item = value as Partial<ReadingSnapshot>;
-  if (typeof item.title !== 'string' || item.title.length > 240 ||
-    typeof item.chapter !== 'string' || item.chapter.length > 160 ||
-    (item.endChapter !== undefined && (typeof item.endChapter !== 'string' || item.endChapter.length > 160)) ||
-    !integer(item.firstParagraph) || !integer(item.lastParagraph) ||
-    !isBookPoint(item.start) || !isBookPoint(item.end) || compareBookPoints(item.start, item.end) >= 0) return;
+  if (!value || typeof value !== 'object') return undefined;
+  const item = value as ReadingSnapshot;
+  if (typeof item.title !== 'string' || item.title.length > 240 || typeof item.chapter !== 'string' ||
+    item.chapter.length > 160 || !integer(item.firstParagraph) || !integer(item.lastParagraph) || !validBookRange(item)) return undefined;
+  const boundary = spoilerBoundaryOf(item);
+  if (!isBookPoint(boundary) || compareBookPoints(boundary, item.end) < 0) return undefined;
+  if (item.indexVersion !== undefined && !integer(item.indexVersion)) return undefined;
+  if (item.reading && (!validBookRange(item.reading) || compareBookPoints(item.reading.end, boundary) > 0)) return undefined;
+  for (const ranges of [item.visibleRanges, item.visitedRanges, item.reading?.ranges, item.selection?.ranges]) {
+    if (ranges !== undefined && (!Array.isArray(ranges) || !ranges.every(validBookRange))) return undefined;
+  }
   if (item.selection && (typeof item.selection.text !== 'string' || item.selection.text.length > 1240 ||
-    !isBookPoint(item.selection.end) || compareBookPoints(item.selection.end, item.end) > 0)) return;
-  if (item.chapterSource !== undefined &&
-    (!isBookPoint(item.chapterSource) || compareBookPoints(item.chapterSource, item.end) >= 0)) return;
-  return item as ReadingSnapshot;
+    !isBookPoint(item.selection.end) || compareBookPoints(item.selection.end, boundary) > 0 ||
+    (item.selection.start && !validBookRange({ start: item.selection.start, end: item.selection.end })))) return undefined;
+  if (item.chapterSource && (!isBookPoint(item.chapterSource) || compareBookPoints(item.chapterSource, item.end) >= 0)) return undefined;
+  return item;
 }
-function sourcePoint(result: ReaderResult) {
-  return isBookPoint(result.last) ? result.last : undefined;
-}
-function visibleResult({ next: _next, last: _last, ...result }: ReaderResult): BookResult {
-  return result;
-}
+const compactSnapshot = (snapshot: ReadingSnapshot): ReadingSnapshot => {
+  const { visitedRanges: _visited, ...rest } = snapshot;
+  return rest;
+};
 
-export function createBookBridge(conflict: (session: string, book: string, snapshot: ReadingSnapshot) => boolean) {
+export function createBookBridge(
+  conflict: (session: string, book: string, snapshot: ReadingSnapshot) => boolean,
+  sessionOf: (id: string) => NovelSession | undefined = () => undefined,
+) {
   const readers = new Map<string, Reader>();
   let disposed = false;
-
+  function stateOf(session: string, reader: Reader) {
+    return readingSyncState(sessionOf(session), reader.book, reader.indexVersion);
+  }
   function clearReader(reader: Reader) {
     reader.poll?.(null);
-    for (const pending of reader.pending.values()) pending.finish(unavailable);
-    reader.active = undefined;
-    reader.prepared = undefined;
-    reader.retry = undefined;
+    for (const pending of reader.pending.values()) pending.finish(unavailable());
+    reader.active = undefined; reader.prepared = undefined; reader.retry = undefined;
     reader.cursors.clear();
   }
   function dispatch(reader: Reader) {
     const pending = [...reader.pending.values()].find((entry) => !entry.delivered);
     if (!pending || !reader.poll) return;
-    pending.delivered = true;
-    reader.poll(pending.request);
+    pending.delivered = true; reader.poll(pending.request);
   }
   function live(session: string) {
     const reader = readers.get(session);
     return reader && Date.now() - reader.lastSeen < 35_000 ? reader : undefined;
   }
   function read(reader: Reader, request: Omit<BookRequest, 'id'>, signal: AbortSignal) {
-    if (signal.aborted) return Promise.resolve(unavailable);
+    if (signal.aborted) return Promise.resolve<ReaderResult>(canceled());
     const id = randomUUID();
     return new Promise<ReaderResult>((resolve) => {
-      const abort = () => finish(unavailable);
-      const timeout = setTimeout(abort, 12_000);
+      const abort = () => finish(canceled());
+      const timeout = setTimeout(() => finish(novelError('READER_TIMEOUT', '阅读器在 12 秒内没有返回正文。',
+        '可以用相同参数重试一次；仍超时请重新打开本书。', { retryable: true })), 12_000);
       const finish = (value: ReaderResult) => {
-        clearTimeout(timeout);
-        signal.removeEventListener('abort', abort);
-        reader.pending.delete(id);
-        resolve(value);
+        clearTimeout(timeout); signal.removeEventListener('abort', abort); reader.pending.delete(id); resolve(value);
       };
       signal.addEventListener('abort', abort, { once: true });
       reader.pending.set(id, { request: { id, ...request }, delivered: false, finish });
       dispatch(reader);
     });
   }
+  function syncPlan(active: Active) {
+    const reading = active.snapshot.reading ?? active.snapshot;
+    const baseline = active.state.baseline ?? reading.start;
+    const visited = mergeBookRanges([...(active.snapshot.visitedRanges ?? []),
+      ...(active.snapshot.reading?.ranges ?? active.snapshot.visibleRanges ?? [{ start: reading.start, end: reading.end }])]);
+    const requested = clipBookRanges(visited, baseline, reading.end);
+    return { baseline, target: reading.end, has_gaps: requested.length > 1,
+      ranges: subtractBookRanges(requested, active.state.covered) };
+  }
+  function saveTask(reader: Reader, task: ReadTask) {
+    reader.cursors.set(task.id, task);
+    if (reader.cursors.size > 100) reader.cursors.delete(reader.cursors.keys().next().value!);
+  }
+
+  async function perform(session: string, reader: Reader, active: Active, input: BookToolQuery, signal: AbortSignal): Promise<ToolResult> {
+    if (signal.aborted) return canceled();
+    if (reader.active !== active) return novelError('TURN_CONTEXT_CHANGED', '本轮阅读快照已结束或权限发生变化。',
+      '请重新发送消息，以新的阅读快照读取正文。');
+    let task: ReadTask | undefined;
+    if ('cursor' in input) {
+      task = reader.cursors.get(input.cursor) ?? recoverReadTask(sessionOf(session), reader.book, input.cursor);
+      if (!task) return novelError('CURSOR_NOT_FOUND', '找不到属于本会话的续读任务。',
+        '不要修改或拼接游标。增量同步请重新调用 sync_reading；指定章节请重新查询目录。', {
+          next_call: input.cursor.startsWith('sync_') ? syncRecovery : directoryRecovery,
+        });
+      if (task.owner !== session || task.book !== reader.book) return novelError('CURSOR_WRONG_BOOK',
+        '游标属于另一条会话或另一版本书籍。', '请在当前会话重新发起读取。', { next_call: directoryRecovery });
+      if (task.indexVersion !== (active.snapshot.indexVersion ?? 0)) return novelError('CURSOR_INDEX_CHANGED',
+        '章节索引已更新，旧游标不能定位当前正文。', '请重新同步当前位置或查询目录。', {
+          next_call: task.sync ? syncRecovery : directoryRecovery,
+        });
+      if (!snapshotOf(task.snapshot)) return novelError('CURSOR_DAMAGED', '游标记录中的阅读定位不完整。',
+        '请重新发起读取，不要猜测章节偏移。', { next_call: task.sync ? syncRecovery : directoryRecovery });
+      if (task.sync && task.resume && task.query.kind === 'segments') {
+        const prefix = clipBookRanges(task.query.ranges, task.sync.baseline, task.resume);
+        if (subtractBookRanges(prefix, active.state.covered).length) return novelError('CURSOR_UNCOMMITTED',
+          '上一批同步没有成功完成，直接续读会跳过尚未确认的正文。',
+          '请调用 sync_reading，从已确认位置重新补齐。', { next_call: syncRecovery });
+      }
+    }
+    let query: BookQuery;
+    let sync = task?.sync;
+    if (task) query = task.query;
+    else if ('kind' in input && input.kind === 'sync') {
+      const plan = syncPlan(active);
+      sync = { baseline: plan.baseline, target: plan.target, has_gaps: plan.has_gaps };
+      query = { kind: 'segments', ranges: plan.ranges };
+      if (!plan.ranges.length) return { status: 'ok', chapters: [], stopReason: 'completed',
+        message: '截至本轮阅读位置，没有需要补齐的新正文；讨论回翻位置可使用 read_current。',
+        sync: { state: 'up_to_date', has_gaps: plan.has_gaps, target: plan.target } };
+    } else query = input as BookQuery;
+    if (task?.sync && query.kind === 'segments') {
+      const left = clipBookRanges(query.ranges, task.resume ?? task.sync.baseline, task.sync.target);
+      const missing = subtractBookRanges(left, active.state.covered);
+      if (!missing.length) return { status: 'ok', chapters: [], stopReason: 'completed',
+        message: '这个同步任务的正文已确认同步，无需重复读取。',
+        sync: { state: 'up_to_date', has_gaps: task.sync.has_gaps, target: task.sync.target } };
+      query = { kind: 'segments', ranges: missing };
+    }
+    const frozen = task?.snapshot ?? active.snapshot;
+    const readingBoundary = spoilerBoundaryOf(active.snapshot);
+    const protectedReading = active.protectedReading || !!task?.boundary;
+    const cutoff = task?.boundary && (!active.protectedReading || compareBookPoints(task.boundary, readingBoundary) < 0)
+      ? task.boundary : readingBoundary;
+    const remaining = Math.max(0, roundBookBudget - active.used);
+    const metadata: ReadingProvenance = { book: reader.book, owner: session, turn: active.turn,
+      indexVersion: active.snapshot.indexVersion ?? 0 };
+    const budget = (returned: number) => ({ limit_chars: roundBookBudget, returned_chars: returned,
+      used_chars: active.used, remaining_chars: Math.max(0, roundBookBudget - active.used) });
+    const cursorFor = (resume?: BookPoint, resolvedQuery = query): ReadTask => ({
+      id: (sync ? 'sync_' : query.kind === 'contents' ? 'toc_' : 'read_') + randomUUID(),
+      owner: session, book: reader.book, indexVersion: active.snapshot.indexVersion ?? 0,
+      query: resolvedQuery, snapshot: compactSnapshot(frozen),
+      ...(resume ? { resume } : {}), ...(protectedReading ? { boundary: cutoff } : {}), ...(sync ? { sync } : {}),
+      ...(task?.current ? { current: task.current } : query.kind === 'near' ? { current: {
+        baseline: active.state.baseline ?? (frozen.reading ?? frozen).start,
+        target: (frozen.reading ?? frozen).end,
+        ranges: frozen.reading?.ranges ?? [{ start: frozen.start, end: frozen.end }],
+      } } : {}),
+    });
+    if (query.kind !== 'contents' && !remaining) {
+      const cursor = task ?? cursorFor();
+      saveTask(reader, cursor); metadata.cursor = cursor;
+      return { status: 'blocked', chapters: [], stopReason: 'round_budget', end_notice: budgetNotice, message: budgetNotice,
+        budget: budget(0), nextCursor: cursor.id, next_call: { tool: 'continue_reading', arguments: { cursor: cursor.id }, when: 'next_turn' },
+        source: metadata };
+    }
+    const result = await read(reader, { query, snapshot: frozen, protectedReading, cutoff,
+      limit: query.kind === 'contents' ? 0 : remaining, ...(task?.resume ? { resume: task.resume } : {}) }, signal);
+    if (reader.active !== active || signal.aborted) return canceled();
+    const returned = result.chapters?.reduce((sum, chapter) => sum + countTextCharacters(chapter.text ?? ''), 0) ?? 0;
+    if (returned > remaining || (result.last && protectedReading && compareBookPoints(result.last, cutoff) > 0)) {
+      return novelError('READ_VALIDATION_FAILED', '阅读器返回的正文超出了本轮额度或防剧透范围，结果已丢弃。',
+        '请刷新阅读器后重新发送消息；本次没有推进同步进度。');
+    }
+    active.used += returned;
+    const { next, last, deliveredRanges, resolvedRanges, limits: _limits, ...output } = result;
+    if (last) metadata.point = last;
+    if (next && (!protectedReading || compareBookPoints(next, cutoff) <= 0)) {
+      const cursor = cursorFor(next, query.kind === 'near' && resolvedRanges ? { kind: 'segments', ranges: resolvedRanges } : query);
+      saveTask(reader, cursor); metadata.cursor = cursor;
+      output.nextCursor = cursor.id;
+      output.next_call = { tool: 'continue_reading', arguments: { cursor: cursor.id },
+        when: query.kind === 'contents' ? 'now' : 'next_turn' };
+    }
+    if (deliveredRanges?.length && !result.error) {
+      const reading = frozen.reading ?? frozen;
+      const baseline = sync?.baseline ?? task?.current?.baseline ?? active.state.baseline ?? reading.start;
+      const target = sync?.target ?? task?.current?.target ?? reading.end;
+      // Reading the current passage can establish the first synchronization, but arbitrary
+      // chapter queries never jump the reading checkpoint past an unsynchronized gap.
+      const eligible = sync ? deliveredRanges : query.kind === 'near' || task?.current
+        ? deliveredRanges.flatMap((range) => clipBookRanges(task?.current?.ranges ?? frozen.reading?.ranges ?? [{ start: reading.start, end: reading.end }], range.start, range.end)) : [];
+      const delivered = clipBookRanges(eligible, baseline, target);
+      if (delivered.length) {
+        const end = delivered.at(-1)!.end;
+        const excerpt = result.chapters?.findLast((chapter) => chapter.range && compareBookPoints(chapter.range.start, end) < 0);
+        const sameReadingEnd = compareBookPoints(end, reading.end) === 0;
+        const label = excerpt ? { start: delivered[0]!.start, end, chapter_id: excerpt.chapter_id, chapter: excerpt.title,
+          chapter_number: excerpt.chapter_number, volume_title: excerpt.volume_title,
+          firstParagraph: excerpt.location?.start.paragraph ?? 1,
+          lastParagraph: sameReadingEnd ? reading.lastParagraph : excerpt.location?.end.paragraph ?? 1 } : undefined;
+        metadata.sync = { baseline, target, delivered, ...(label ? { last: label } : {}) };
+        active.state.baseline ??= baseline;
+        active.state.covered = mergeBookRanges([...active.state.covered, ...delivered]);
+      }
+    }
+    if (sync) output.sync = { state: result.error ? 'pending' : next || result.stopReason !== 'completed' ? 'partial' : 'up_to_date',
+      has_gaps: sync.has_gaps, target: sync.target };
+    return { ...output, budget: budget(returned), source: metadata };
+  }
 
   return {
-    active(session: string) {
-      return live(session)?.active;
+    active(session: string) { return live(session)?.active; },
+    state(session: string): SyncState {
+      const reader = live(session);
+      return reader ? stateOf(session, reader) : { covered: [] };
+    },
+    syncInfo(session: string) {
+      const reader = live(session), active = reader?.active;
+      if (!active) return undefined;
+      const plan = syncPlan(active);
+      return { state: !active.state.baseline ? 'not_started' : plan.ranges.length ? 'pending' : 'up_to_date',
+        baseline: plan.baseline, target: plan.target, pending_ranges: plan.ranges.length,
+        has_gaps: plan.has_gaps, last_synced: active.state.last };
     },
     persona(session: string) {
       const reader = live(session);
       if (reader?.active) return reader.active.persona;
-      // DSH assembles its system prompt before the pre-step hook admits the prepared turn.
       const prepared = reader?.prepared;
       return prepared && !prepared.personaRemaining && prepared.expires >= Date.now() ? prepared.persona : undefined;
     },
-    book(session: string) {
-      return live(session)?.book;
-    },
+    book(session: string) { return live(session)?.book; },
     admit(session: string, request: string, turn: number, retry = false) {
       const reader = live(session);
-      if (!reader) return;
+      if (!reader) return undefined;
       if (reader.active?.id === request && reader.active.turn === turn) return reader.active;
       const prepared = reader.prepared;
-      const pending = prepared?.id === request && prepared.expires >= Date.now()
-        ? prepared : retry ? reader.retry : undefined;
-      if (!pending || pending.personaRemaining || (reader.protectedReading && !pending.protectedReading)) return;
+      const pending = prepared?.id === request && prepared.expires >= Date.now() ? prepared : retry ? reader.retry : undefined;
+      if (!pending || pending.personaRemaining || (reader.protectedReading && !pending.protectedReading)) return undefined;
       if (pending === prepared) reader.prepared = undefined;
-      reader.retry = pending;
-      reader.active = { ...pending, turn, used: 0 };
+      reader.retry = pending; reader.indexVersion = pending.snapshot.indexVersion ?? 0;
+      reader.active = { ...pending, turn, used: 0, state: stateOf(session, reader), queue: Promise.resolve(), calls: new Map() };
       return reader.active;
     },
     finish(session: string, turn?: number) {
       const reader = readers.get(session);
-      if (reader?.active && (turn === undefined || turn === reader.active.turn)) reader.active = undefined;
+      if (reader?.active && (turn === undefined || turn === reader.active.turn)) {
+        reader.active = undefined;
+        reader.poll?.({ type: 'sync-state', state: stateOf(session, reader) });
+      }
+    },
+    async query(session: string, input: BookToolQuery, signal: AbortSignal, callId: string = randomUUID()): Promise<ToolResult> {
+      const reader = live(session), active = reader?.active;
+      if (!reader || !active) return unavailable();
+      const key = JSON.stringify(input);
+      const previous = active.calls.get(callId);
+      if (previous) return previous.key === key ? previous.result : novelError('CALL_ID_CONFLICT',
+        '同一个调用标识携带了不同读取参数。', '请使用新的工具调用重新发起请求。');
+      const result = active.queue.then(() => perform(session, reader, active, input, signal)).catch((error: unknown) => {
+        const reference = randomUUID();
+        console.error('[novel-reader]', reference, error);
+        return novelError('INTERNAL_READ_ERROR', '读取过程中发生内部异常，错误编号：' + reference,
+          '请重新打开本书后重试；仍失败时请提供错误编号。本次未确认同步成功。', { retryable: true });
+      });
+      active.queue = result.then(() => {});
+      active.calls.set(callId, { key, result });
+      void result.then((value) => { if (value.error?.retryable) active.calls.delete(callId); });
+      return result;
     },
 
-    async query(session: string, input: BookQuery | { cursor: string }, signal: AbortSignal): Promise<ToolResult> {
-      const reader = live(session);
-      const active = reader?.active;
-      if (!reader || !active || signal.aborted) return unavailable;
-      const cursor = 'cursor' in input ? reader.cursors.get(input.cursor) : undefined;
-      if ('cursor' in input && !cursor) return { status: 'invalid_cursor', message: '续读位置已失效，请重新查询原范围。' };
-      const query = cursor?.query ?? input as BookQuery;
-      const protectedReading = active.protectedReading || !!cursor?.boundary;
-      const boundary = cursor?.boundary;
-      const cutoff = boundary && (!active.protectedReading || compareBookPoints(boundary, active.snapshot.end) < 0)
-        ? boundary : active.snapshot.end;
-      const snapshot = cursor?.snapshot ?? active.snapshot;
-      const remaining = roundBookBudget - active.used;
-      if (remaining < 320) {
-        return { status: 'ok', chapters: [], stopReason: 'round_budget',
-          ...('cursor' in input ? { nextCursor: input.cursor } : {}) };
-      }
-      const batchBudget = query.kind === 'near' ? nearBookBatchBudget
-        : query.kind === 'contents' ? 2_500 : chapterBookBatchBudget;
-      const budget = Math.min(batchBudget, remaining);
-      let limit = Math.min(batchBudget, remaining - 100);
-      const nextCursor = randomUUID();
-      // The reader estimates raw text length. JSON escapes can expand it, so refetch
-      // from the same position before charging the budget or publishing a cursor.
-      for (let attempt = 0; attempt < 3 && limit > 0; attempt++) {
-        const result = await read(reader, { query, snapshot, protectedReading, cutoff, limit, resume: cursor?.resume }, signal);
-        if (reader.active !== active || signal.aborted) return unavailable;
-        const last = sourcePoint(result);
-        if (last && protectedReading && compareBookPoints(last, cutoff) > 0) return unavailable;
-        const output = visibleResult(result);
-        const next = isBookPoint(result.next) && (!protectedReading || compareBookPoints(result.next, cutoff) <= 0)
-          ? result.next : undefined;
-        if (next) output.nextCursor = nextCursor;
-        if (next && (remaining - JSON.stringify(output).length < 320 ||
-          (output.chapters?.length === 0 && remaining < batchBudget))) output.stopReason = 'round_budget';
-        const length = JSON.stringify(output).length;
-        if (length > budget) {
-          limit = Math.floor((limit - 1) * budget / length);
-          continue;
-        }
-        if (next) {
-          reader.cursors.set(nextCursor, {
-            query, snapshot, resume: next, ...(protectedReading ? { boundary: cutoff } : {}),
-          });
-          if (reader.cursors.size > 80) reader.cursors.delete(reader.cursors.keys().next().value!);
-        }
-        active.used += length;
-        return { ...output, source: { book: reader.book, ...(last ? { point: last } : {}) } };
-      }
-      if (remaining < batchBudget) {
-        return { status: 'ok', chapters: [], stopReason: 'round_budget',
-          ...('cursor' in input ? { nextCursor: input.cursor } : {}) };
-      }
-      return { status: 'unavailable', message: '结果超出单批读取额度，请缩小查询范围。' };
-    },
 
     async handle(req: IncomingMessage, res: ServerResponse) {
       if (disposed || req.method !== 'POST' || req.headers['content-type']?.split(';')[0] !== 'application/json') {
@@ -230,7 +320,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       let reader = readers.get(session);
       if (op === 'hello' && (!reader || (reader.book === book && reader.token === token && reader.instance !== instance))) {
         if (reader) clearReader(reader);
-        reader = { book, token, instance, protectedReading: body.protectedReading !== false, lastSeen: Date.now(),
+        reader = { book, token, instance, indexVersion: integer(body.indexVersion) ? body.indexVersion : 0, protectedReading: body.protectedReading !== false, lastSeen: Date.now(),
           pending: new Map(), cursors: new Map() };
         readers.set(session, reader);
       }
@@ -239,6 +329,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
         return;
       }
       reader.lastSeen = Date.now();
+      if (op === 'state') { json(res, 200, stateOf(session, reader)); return; }
       if (reader.prepared && reader.prepared.expires < reader.lastSeen) reader.prepared = undefined;
       if (op === 'close') {
         clearReader(reader);
@@ -249,7 +340,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       if (op === 'hello' || op === 'protection') {
         const protection = body.protectedReading !== false;
         if (protection && !reader.protectedReading) {
-          for (const pending of reader.pending.values()) pending.finish(unavailable);
+          for (const pending of reader.pending.values()) pending.finish(unavailable());
           reader.active = undefined;
           reader.prepared = undefined;
           reader.retry = undefined;
@@ -263,7 +354,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
         const personaRemaining = body.personaLength ?? 0;
         if (!snapshot || typeof id !== 'string' || !identity.test(id) ||
           !integer(personaRemaining) || (personaRemaining > 0 && body.persona !== undefined)) {
-          json(res, 400, { message: unavailable.message });
+          json(res, 400, { message: unavailable().message });
           return;
         }
         if (reader.active || (reader.prepared && reader.prepared.id !== id)) {
@@ -272,7 +363,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
         }
         const protectedReading = reader.protectedReading || body.protectedReading !== false;
         if (protectedReading && conflict(session, book, snapshot)) {
-          json(res, 412, { message: '此会话曾查阅当前位置之后的内容。请按当前位置新建会话，或回到原阅读位置。' });
+          json(res, 412, { message: '此会话曾查阅最远阅读位置之后的内容。请新建会话，或读到该位置后继续。' });
           return;
         }
         reader.prepared = {
@@ -319,7 +410,7 @@ export function createBookBridge(conflict: (session: string, book: string, snaps
       const target = reader;
       target.poll?.(null);
       const timeout = setTimeout(() => complete(null), 20_000);
-      const complete = (request: BookRequest | null) => {
+      const complete = (request: BookPoll | null) => {
         cleanup();
         json(res, 200, request);
       };

@@ -2,8 +2,11 @@ export const companionStyle = `
 .nr-root { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .nr-root[data-dsh-reader-fullscreen] {
   position: fixed; z-index: 900; width: auto; height: auto;
+  /* Native fullscreen can set chrome-top to zero while window controls still overlay the top strip. */
   inset-block-start: max(
-    var(--dsh-frame-chrome-top, var(--dsh-frame-top-clearance, var(--dsh-windows-titlebar-height, 0px))),
+    var(--dsh-frame-chrome-top, 0px),
+    var(--dsh-frame-top-clearance, 0px),
+    var(--dsh-windows-titlebar-height, 0px),
     env(safe-area-inset-top, 0px),
     var(--nr-viewport-top, 0px)
   );
@@ -13,6 +16,8 @@ export const companionStyle = `
   background: var(--dsw-alias-bg-base, #f7efe3);
 }
 .nr-root > iframe { display: block; flex: 1 1 0; min-width: 0; width: 100%; height: 100%; border: 0; }
+.nr-reading-status { display: flex; flex-direction: column; gap: 3px; padding: 5px 12px 8px; font-size: 12px; line-height: 1.5; opacity: .8; }
+.nr-reading-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nr-companion {
   --nr-ui-size: var(--dsh-content-font-size-secondary, 13px);
   --nr-meta-size: calc(var(--nr-ui-size) - 1px);

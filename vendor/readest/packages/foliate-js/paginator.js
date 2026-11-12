@@ -4383,6 +4383,22 @@ export class Paginator extends HTMLElement {
         }
         return contents
     }
+    // Expose every actually visible document range, including cross-file spreads.
+    // Keep the renderer's primary relocation unchanged for existing consumers.
+    getVisibleRanges() {
+        const ranges = []
+        for (const [index, view] of this.#sortedViews) {
+            if (!view.document) continue
+            const offset = this.#getViewOffset(index)
+            const size = view.element.getBoundingClientRect()[this.sideProp]
+            if (offset + size <= this.#renderedStart || offset >= this.#renderedEnd) continue
+            const range = getVisibleRange(view.document,
+                this.#renderedStart - offset, this.#renderedEnd - offset,
+                this.#getRectMapper(view))
+            if (range && !range.collapsed) ranges.push({ index: this.#spineOf(index), range })
+        }
+        return ranges
+    }
     #applyStyles(doc) {
         const $$styles = this.#styleMap.get(doc)
         if (!$$styles) return

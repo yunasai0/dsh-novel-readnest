@@ -62,6 +62,7 @@ export interface Renderer extends HTMLElement {
     // absent on foliate builds older than the #133 squash (1a1cf1d).
     contentPages?: number;
   }[];
+  getVisibleRanges?: () => { index: number; range: Range }[];
   scrollToAnchor?: (anchor: number | Range, reason?: string, smooth?: boolean) => void;
   addEventListener: (
     type: string,

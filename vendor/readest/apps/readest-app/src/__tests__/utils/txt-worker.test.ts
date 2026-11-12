@@ -38,6 +38,47 @@ describe('convertTxtToEpubWithFallback', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test('reports worker progress without settling early or cloning the callback', async () => {
+    let instance!: { onmessage: ((event: { data: unknown }) => void) | null; postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> };
+    vi.stubGlobal('Worker', class {
+      onmessage = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor() { instance = this; }
+    });
+    const onProgress = vi.fn();
+    const pending = convertTxtToEpubWithFallback({ file: makeFile('book.txt', 1024), onProgress });
+    expect(instance.postMessage.mock.calls[0]?.[0].payload.onProgress).toBeUndefined();
+    instance.onmessage!({ data: { type: 'progress', payload: { completed: 10, total: 20 } } });
+    expect(onProgress).toHaveBeenCalledWith({ completed: 10, total: 20 });
+    expect(instance.terminate).not.toHaveBeenCalled();
+    instance.onmessage!({ data: { type: 'success', payload: {
+      epubBuffer: new ArrayBuffer(2), name: 'book.epub', bookTitle: 'Book', chapterCount: 20, language: 'zh',
+    } } });
+    expect((await pending).chapterCount).toBe(20);
+    expect(instance.terminate).toHaveBeenCalledOnce();
+    expect(mockConvert).not.toHaveBeenCalled();
+  });
+
+  test('keeps the timeout active after progress and terminates before falling back', async () => {
+    vi.useFakeTimers();
+    let instance!: { onmessage: ((event: { data: unknown }) => void) | null; terminate: ReturnType<typeof vi.fn> };
+    vi.stubGlobal('Worker', class {
+      onmessage = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor() { instance = this; }
+    });
+    const pending = convertTxtToEpubWithFallback({ file: makeFile('book.txt', 1024), timeoutMs: 50 });
+    instance.onmessage!({ data: { type: 'progress', payload: { completed: 1, total: 20 } } });
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await pending).toEqual(fakeResult);
+    expect(instance.terminate).toHaveBeenCalledOnce();
+    expect(mockConvert).toHaveBeenCalledOnce();
   });
 
   describe('when Worker is undefined (default jsdom)', () => {

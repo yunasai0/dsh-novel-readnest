@@ -1,6 +1,7 @@
 'use client';
 
 import BookshelvesDialog from './components/BookshelvesDialog';
+import NovelPreparationProgress from '@/components/NovelPreparationProgress';
 
 import clsx from 'clsx';
 import * as React from 'react';
@@ -2035,6 +2036,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       {(loading || isSyncing) && (
         <div className='fixed inset-0 z-50 flex items-center justify-center'>
           <Spinner loading />
+          <NovelPreparationProgress kind='import' />
         </div>
       )}
       {currentGroupPath && (

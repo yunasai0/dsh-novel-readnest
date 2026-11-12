@@ -5,7 +5,7 @@ import {
 import { readerPath } from './path.js';
 import {
   companionChannel, companionEndpoint, companionPreset, companionRequestBodyLimit,
-  type BookRequest, type ReaderBook, type ReaderResult, type ReadingSnapshot,
+  type BookPoll, type ReaderBook, type ReaderResult, type ReadingLocation, type ReadingSnapshot, type SyncState,
 } from './protocol.js';
 import { companionStyle } from './companion-style.js';
 import {
@@ -99,7 +99,7 @@ function askReader<T>(
   frame: RefObject<HTMLIFrameElement | null>,
   book: string,
   type: 'book-query' | 'book-snapshot',
-  request: { id: string },
+  request: { id: string; quoteSnapshot?: ReadingSnapshot },
   signal: AbortSignal,
 ) {
   const reader = frame.current?.contentWindow;
@@ -130,7 +130,7 @@ function askReader<T>(
 }
 
 function NativeSession({
-  entry, book, frame, services, slots, view, protectedReading, newSession, quoteSnapshot, clearQuote,
+  entry, book, frame, services, slots, view, protectedReading, newSession, quoteSnapshot, clearQuote, onSync, onReading,
 }: {
   entry: Entry;
   book: string;
@@ -142,6 +142,8 @@ function NativeSession({
   newSession(): void;
   quoteSnapshot?: ReadingSnapshot;
   clearQuote(snapshot: ReadingSnapshot): void;
+  onSync(state: SyncState): void;
+  onReading(reading: ReadingLocation): void;
 }) {
   const protection = useRef(protectedReading);
   protection.current = protectedReading;
@@ -192,8 +194,8 @@ function NativeSession({
         protectedReading: protection.current,
         persona: selectedNovelPersona(readNovelPersonaSettings())?.prompt,
         quote,
-        snapshot: quote ? Promise.resolve(quote) : askReader<ReadingSnapshot>(
-          frame, book, 'book-snapshot', { id: crypto.randomUUID() }, signal,
+        snapshot: askReader<ReadingSnapshot>(
+          frame, book, 'book-snapshot', { id: crypto.randomUUID(), quoteSnapshot: quote }, signal,
         ),
       };
     };
@@ -276,7 +278,10 @@ function NativeSession({
       };
     };
     const run = async () => {
-      await post('hello', { protectedReading: protection.current });
+      const initial = await askReader<ReadingSnapshot>(frame, book, 'book-snapshot', { id: crypto.randomUUID() }, signal);
+      if (signal.aborted) return;
+      if (initial?.reading) onReading(initial.reading);
+      await post('hello', { protectedReading: protection.current, indexVersion: initial?.indexVersion });
       syncProtection.current = updateProtection;
       if (signal.aborted) return;
       try {
@@ -290,9 +295,13 @@ function NativeSession({
       if (signal.aborted) return;
       restore = wrap(session);
       setReference(owned);
+      const syncState: SyncState = await post('state');
+      if (!signal.aborted) onSync(syncState);
       while (!signal.aborted) {
-        const request: BookRequest | null = await post('poll');
+        const request: BookPoll | null = await post('poll');
         if (!request || signal.aborted) continue;
+        if ('type' in request && request.type === 'sync-state') { onSync(request.state); continue; }
+        if (!('query' in request)) continue;
         const value = await askReader<ReaderResult>(frame, book, 'book-query', request, signal)
           ?? { status: 'unavailable', message: '阅读器没有返回正文。' };
         if (!signal.aborted) await post('reply', { id: request.id, value });
@@ -308,14 +317,14 @@ function NativeSession({
       void post('close', {}, AbortSignal.timeout(2500)).catch(() => {});
       owned?.release();
     };
-  }, [book, entry.id, entry.token, frame, services]);
+  }, [book, entry.id, entry.token, frame, services, onSync, onReading]);
 
   if (error) return <p className="nr-message" role="alert">{error}</p>;
   if (!reference) return <p className="nr-message">正在打开 AI 会话…</p>;
   return (
     <slots.SessionProvider session={reference}>
       {sendError && <p className="nr-message" role="alert">
-        {sendError.message}{sendError.history && <button type="button" onClick={newSession}>按当前位置新建会话</button>}
+        {sendError.message}{sendError.history && <button type="button" onClick={newSession}>按已读范围新建会话</button>}
       </p>}
       {slots.renderSlot(conversationSlot, { view })}
     </slots.SessionProvider>
@@ -353,6 +362,8 @@ function BookPanel({
   const [draftTitle, setDraftTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [syncState, setSyncState] = useState<SyncState>();
+  const [sessionReading, setSessionReading] = useState<ReadingLocation>();
   const panel = useRef<HTMLElement>(null);
   const drag = useRef<{
     pointerId: number; startY: number; lastY: number; lastAt: number; velocity: number;
@@ -373,6 +384,7 @@ function BookPanel({
   const archived = new Set(workspace.archivedSessionIds);
   const pinned = new Set(workspace.pinnedSessionIds);
   const current = state.entries.find(({ id }) => id === state.selected && !archived.has(id));
+  useEffect(() => { setSyncState(undefined); }, [current?.id]);
   const rows = state.entries.filter(({ id }) => archived.has(id) === archivedView)
     .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
   const titleOf = (id: string) => catalog.byId[id]?.title || '新会话';
@@ -600,6 +612,12 @@ function BookPanel({
                 防剧透 · {state.protectedReading ? '开启' : '关闭'}
               </button>
             </div>
+            <div className="nr-reading-status" aria-live="polite">
+              <span>当前阅读：{(book.reading ?? sessionReading)?.chapter ?? '正在获取位置'}
+                {(book.reading ?? sessionReading) && ' · 第' + (book.reading ?? sessionReading)!.lastParagraph + '段'}</span>
+              <span>{syncState?.last ? '本会话已同步：' + syncState.last.chapter + ' · 第' + syncState.last.lastParagraph + '段' +
+                (syncState.has_gaps ? '（分段同步）' : '') : '本会话尚未同步正文'}</span>
+            </div>
           </header>
           {book.quoteSnapshot?.selection && (
             <div className="nr-selected-quote">
@@ -611,6 +629,7 @@ function BookPanel({
           {current ? (
             <NativeSession key={current.id} entry={current} book={book.id} frame={frame}
               services={services} slots={slots} view={view} protectedReading={state.protectedReading} newSession={createSession}
+              onSync={setSyncState} onReading={setSessionReading}
               quoteSnapshot={book.quoteSnapshot} clearQuote={clearQuote} />
           ) : (
             <div className="nr-message">
@@ -625,7 +644,7 @@ function BookPanel({
           <section role="dialog" aria-label="防剧透模式">
             <button className="nr-close" aria-label="关闭防剧透设置" onClick={() => setSettings(false)}>×</button>
             <h3>防剧透模式</h3>
-            <p>开启后，AI 只查阅你已读过的内容。关闭后，AI 可以查阅本书的未读内容。这个设置适用于本书的所有会话。</p>
+            <p>开启后，AI 可查阅从书籍开头到你曾读到的最远位置的内容，回翻不会缩小范围。直接跳到后面的页面也会推进这个边界。关闭后，AI 可以查阅全书。这个设置适用于本书的所有会话。</p>
             <label>启用防剧透 <input type="checkbox" role="switch" checked={state.protectedReading}
               onChange={(event) => {
                 const checked = event.currentTarget.checked;
@@ -686,9 +705,11 @@ export function ReaderPanel({ services, ...slots }: PanelSlots & { services: Ses
         setBook((current) => current?.id === message.book.id ? null : message.book);
       } else if (message.type === 'open-selection' && validId(message.book?.id) &&
         typeof message.book.title === 'string' && typeof message.snapshot?.selection?.text === 'string') {
-        setBook({ ...message.book, quoteSnapshot: message.snapshot });
+        setBook({ ...message.book, reading: message.snapshot.reading, quoteSnapshot: message.snapshot });
       } else if (message.type === 'closed') {
         setBook((current) => current?.id === message.book ? null : current);
+      } else if (message.type === 'position' && message.reading && typeof message.reading.chapter === 'string') {
+        setBook((current) => current && current.id === message.book ? { ...current, reading: message.reading } : current);
       }
     };
     window.addEventListener('message', receive);

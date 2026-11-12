@@ -4,6 +4,7 @@ export interface TxtConverterWorkerRequest {
     file: File;
     author?: string;
     language?: string;
+    prefetchText?: boolean;
   };
 }
 
@@ -15,6 +16,7 @@ export interface TxtConverterWorkerSuccess {
     bookTitle: string;
     chapterCount: number;
     language: string;
+    prefetchedText?: Record<string, string>;
   };
 }
 
@@ -25,4 +27,14 @@ export interface TxtConverterWorkerError {
   };
 }
 
-export type TxtConverterWorkerResponse = TxtConverterWorkerSuccess | TxtConverterWorkerError;
+export interface TxtConversionProgress {
+  completed: number;
+  total: number;
+}
+
+export interface TxtConverterWorkerProgress {
+  type: 'progress';
+  payload: TxtConversionProgress;
+}
+
+export type TxtConverterWorkerResponse = TxtConverterWorkerSuccess | TxtConverterWorkerError | TxtConverterWorkerProgress;

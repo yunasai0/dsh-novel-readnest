@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import NovelPreparationProgress from '@/components/NovelPreparationProgress';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { Book } from '@/types/book';
@@ -454,6 +455,7 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
       !errorLoading && (
         <div className='hero hero-content full-height'>
           <Spinner loading={true} />
+          <NovelPreparationProgress kind='open' />
         </div>
       )
     );

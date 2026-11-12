@@ -2,6 +2,9 @@ import { partialMD5 } from './md5';
 import { getBaseFilename } from './path';
 import { detectLanguage } from './lang';
 import { configureZip } from './zip';
+import { createNewlineNormalizer, isProseHeading, splitMixedHeading } from './novelHeadings';
+import type { TxtConversionProgress } from './txt-worker-protocol';
+import { createTxtPrefetch } from './txt-prefetch';
 
 interface Metadata {
   bookTitle: string;
@@ -80,12 +83,16 @@ interface Chapter {
   // split off by the segment regex) are merged into the preceding detected
   // chapter instead of becoming bogus TOC entries. See issue #4063.
   detected?: boolean;
+  printedContents?: boolean;
+  headingRepair?: 'mixed';
 }
 
 interface Txt2EpubOptions {
   file: File;
   author?: string;
   language?: string;
+  onProgress?: (progress: TxtConversionProgress) => void;
+  prefetchText?: boolean;
 }
 
 interface ExtractChapterOptions {
@@ -98,6 +105,7 @@ export interface ConversionResult {
   bookTitle: string;
   chapterCount: number;
   language: string;
+  prefetchedText?: Record<string, string>;
 }
 
 const zipWriteOptions = {
@@ -151,7 +159,7 @@ export class TxtToEpubConverter {
     const runtimeEncoding = this.resolveSupportedEncoding(detectedEncoding);
     // console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
     const decoder = new TextDecoder(runtimeEncoding);
-    let txtContent: string | null = decoder.decode(fileContent).trim();
+    let txtContent: string | null = decoder.decode(fileContent).replace(/\r\n?/g, '\n').trim();
     fileContent = null;
 
     const filenameMeta = extractTxtFilenameMetadata(txtFile.name);
@@ -194,14 +202,17 @@ export class TxtToEpubConverter {
       });
     }
     // Chapter HTML is the remaining corpus; drop the decoded TXT before zip.
+    chapters = this.collapsePrintedContents(chapters);
     txtContent = null;
 
-    const blob = await this.createEpub(chapters, metadata);
+    const prefetch = createTxtPrefetch(options.prefetchText);
+    const blob = await this.createEpub(chapters, metadata, options.onProgress, prefetch.collect);
     return {
       file: new File([blob], fileName),
       bookTitle,
       chapterCount: chapters.length,
       language,
+      ...(prefetch.texts ? { prefetchedText: prefetch.texts } : {}),
     };
   }
 
@@ -261,12 +272,15 @@ export class TxtToEpubConverter {
       });
     }
 
-    const blob = await this.createEpub(chapters, metadata);
+    chapters = this.collapsePrintedContents(chapters);
+    const prefetch = createTxtPrefetch(options.prefetchText);
+    const blob = await this.createEpub(chapters, metadata, options.onProgress, prefetch.collect);
     return {
       file: new File([blob], fileName),
       bookTitle,
       chapterCount: chapters.length,
       language,
+      ...(prefetch.texts ? { prefetchedText: prefetch.texts } : {}),
     };
   }
 
@@ -308,6 +322,28 @@ export class TxtToEpubConverter {
         chapters.push(chapter);
       }
     }
+  }
+
+  private collapsePrintedContents(chapters: Chapter[]): Chapter[] {
+    const onlyTitle = (chapter: Chapter) => chapter.detected && !chapter.isVolume &&
+      /^(?:正文开始|正文|开始阅读)?$/.test(chapter.content.replace(/^<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/, '')
+        .replace(/<[^>]*>/g, '').replace(/\s+/g, ''));
+    const result: Chapter[] = [];
+    for (let start = 0; start < chapters.length;) {
+      let end = start;
+      while (end < chapters.length && onlyTitle(chapters[end]!)) end++;
+      if (end - start >= 3) {
+        const content = chapters.slice(start, end).map((chapter) => chapter.content).join('');
+        const previous = result.at(-1);
+        if (previous && !previous.detected) {
+          previous.content += content;
+          previous.printedContents = true;
+          previous.title = '目录（原文）';
+        } else result.push({ title: '目录（原文）', content, isVolume: false, detected: false, printedContents: true });
+        start = end;
+      } else result.push(chapters[start++]!);
+    }
+    return result;
   }
 
   private probeChapterCount(
@@ -480,8 +516,8 @@ export class TxtToEpubConverter {
   ): AsyncGenerator<string> {
     const reader = file.stream().getReader();
     const decoder = new TextDecoder(encoding);
-    const segmentRegex = this.createSegmentRegex(linesBetweenSegments);
-    let pending = '';
+    const segments = this.createSegmentAccumulator(linesBetweenSegments);
+    const normalize = createNewlineNormalizer();
     let completed = false;
 
     try {
@@ -492,22 +528,13 @@ export class TxtToEpubConverter {
           break;
         }
         if (!value) continue;
-        pending += decoder.decode(value, { stream: true });
-        const consumed = this.consumeCompleteSegments(pending, segmentRegex);
-        pending = consumed.pending;
-        for (const segment of consumed.segments) {
+        for (const segment of segments.push(normalize(decoder.decode(value, { stream: true })))) {
           yield segment;
         }
       }
 
-      pending += decoder.decode();
-      const consumed = this.consumeCompleteSegments(pending, segmentRegex);
-      for (const segment of consumed.segments) {
-        yield segment;
-      }
-      if (consumed.pending) {
-        yield consumed.pending;
-      }
+      yield* segments.push(normalize(decoder.decode(), true));
+      yield* segments.finish();
     } finally {
       if (!completed) {
         try {
@@ -522,21 +549,42 @@ export class TxtToEpubConverter {
     chunks: Iterable<string>,
     linesBetweenSegments: number,
   ): Generator<string> {
-    const segmentRegex = this.createSegmentRegex(linesBetweenSegments);
-    let pending = '';
+    const segments = this.createSegmentAccumulator(linesBetweenSegments);
+    const normalize = createNewlineNormalizer();
 
     for (const chunk of chunks) {
-      pending += chunk;
-      const consumed = this.consumeCompleteSegments(pending, segmentRegex);
-      pending = consumed.pending;
-      for (const segment of consumed.segments) {
-        yield segment;
-      }
+      yield* segments.push(normalize(chunk));
     }
 
-    if (pending) {
-      yield pending;
-    }
+    yield* segments.push(normalize('', true));
+    yield* segments.finish();
+  }
+
+  private createSegmentAccumulator(linesBetweenSegments: number) {
+    const regex = this.createSegmentRegex(linesBetweenSegments);
+    let pieces: string[] = [];
+    let tail = '';
+    return {
+      push: (chunk: string) => {
+        const consumed = this.consumeCompleteSegments(tail + chunk, regex);
+        const ready = consumed.segments;
+        if (ready.length) {
+          ready[0] = pieces.join('') + ready[0];
+          pieces = [];
+        }
+        // Only a trailing newline/dash run can become a separator when more text arrives.
+        // Retain the rest without flattening or rescanning the growing whole-book string.
+        tail = consumed.pending.match(/(?:\n+|-+)$/)?.[0] ?? '';
+        const stable = consumed.pending.slice(0, consumed.pending.length - tail.length);
+        if (stable) pieces.push(stable);
+        return ready;
+      },
+      finish: () => {
+        const remaining = pieces.join('') + tail;
+        pieces = []; tail = '';
+        return remaining ? [remaining] : [];
+      },
+    };
   }
 
   private consumeCompleteSegments(
@@ -615,8 +663,17 @@ export class TxtToEpubConverter {
 
     const segmentChapters: Chapter[] = [];
     for (let j = 1; j < matches.length; j += 2) {
-      const title = matches[j]?.trim() || '';
-      const content = matches[j + 1]?.trim() || '';
+      let title = matches[j]?.trim() || '';
+      let content = matches[j + 1]?.trim() || '';
+      if (isProseHeading(title)) {
+        const prose = `<p>${this.formatSegment(title + '\n' + content)}</p>`;
+        const previous = segmentChapters.at(-1);
+        if (previous) previous.content += prose;
+        else segmentChapters.push({ title: '未分章正文', content: prose, isVolume: false, detected: false });
+        continue;
+      }
+      const mixed = splitMixedHeading(title);
+      if (mixed) { title = mixed.title; content = mixed.body + '\n' + content; }
 
       let isVolume = false;
       if (language === 'zh') {
@@ -632,6 +689,7 @@ export class TxtToEpubConverter {
         content: `${headTitle}<p>${formattedSegment}</p>`,
         isVolume,
         detected: true,
+        ...(mixed ? { headingRepair: 'mixed' as const } : {}),
       });
     }
 
@@ -756,7 +814,7 @@ export class TxtToEpubConverter {
       const englishHeading = String.raw`chapter[\s.]*[0-9]+(?:[：:. 　]+[^\n-]{0,50})?(?!\S)`;
       chapterRegexps.push(
         new RegExp(
-          String.raw`(?:^|\n)\s*(` +
+          String.raw`(?:^|\n)\s*((?:[☆★◇◆●○、·•※# ]*)` +
             [numberedHeading, prefaceHeading, englishHeading].join('|') +
             ')',
           'gui',
@@ -815,7 +873,10 @@ export class TxtToEpubConverter {
     return chapterRegexps;
   }
 
-  private async createEpub(chapters: Chapter[], metadata: Metadata): Promise<Blob> {
+  private async createEpub(chapters: Chapter[], metadata: Metadata,
+    onProgress?: (progress: TxtConversionProgress) => void,
+    onEntry?: (name: string, text: string) => void): Promise<Blob> {
+    onProgress?.({ completed: 0, total: chapters.length });
     await configureZip();
     const { BlobWriter, TextReader, ZipWriter } = await import('@zip.js/zip.js');
     const { bookTitle, author, language, identifier } = metadata;
@@ -913,7 +974,9 @@ export class TxtToEpubConverter {
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i]!;
       const lang = language;
-      const body = chapter.content;
+      const body = chapter.detected === false
+        ? chapter.content.replace(/^<h2>\d+<\/h2>/, '')
+        : chapter.content;
       chapter.content = '';
       const chapterContent = `<?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -922,14 +985,16 @@ export class TxtToEpubConverter {
             <title>${chapter.title}</title>
             <link rel="stylesheet" type="text/css" href="../style.css"/>
           </head>
-          <body>${body}</body>
+          <body data-readest-txt-heading="${chapter.printedContents ? 'contents' : chapter.detected === false ? 'generated' : 'detected'}" data-readest-txt-heading-repair="${chapter.headingRepair ?? ''}">${body}</body>
         </html>`.trim();
 
+      onEntry?.(`OEBPS/chapter${i + 1}.xhtml`, chapterContent);
       await zipWriter.add(
         `OEBPS/chapter${i + 1}.xhtml`,
         new TextReader(chapterContent),
         zipWriteOptions,
       );
+      if ((i + 1) % 10 === 0 || i + 1 === chapters.length) onProgress?.({ completed: i + 1, total: chapters.length });
     }
 
     const tocManifest = `<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>`;

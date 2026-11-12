@@ -1,6 +1,6 @@
 {
   "name": "dsh-novel-readnest",
-  "version": "0.2.0-beta.8",
+  "version": "0.2.0-beta.9",
   "description": "DSH Novel ReadNest：基于 Readest 的本地小说阅读与书内 Agent 会话",
   "license": "AGPL-3.0-or-later",
   "author": "yunasai0",

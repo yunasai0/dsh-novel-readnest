@@ -128,6 +128,17 @@ const updateTocLocation = (
   return index;
 };
 
+// Pure section locations from existing sizes; no chapter document reads.
+export const bakeSectionLocations = (sections: SectionItem[]) => {
+  if (!sections.length) return;
+  const sizes = sections.map((s) => (s.linear !== 'no' && s.size > 0 ? s.size : 0));
+  const cumulativeSizes = calculateCumulativeSizes(sections);
+  const totalSize = cumulativeSizes[cumulativeSizes.length - 1]! + sizes[sizes.length - 1]!;
+  const totalLocations = Math.floor(totalSize / SIZE_PER_LOC);
+
+  updateSectionLocations(sections, cumulativeSizes, sizes, totalLocations);
+};
+
 // Pure: compute + write section/fragment locations and TOC item cfi+location.
 // Callers are responsible for passing sections that already have any applicable
 // fragments attached (hydrateBookNav does this before calling). No I/O.
@@ -137,13 +148,7 @@ export const bakeLocationsAndCfis = (
   splitTOCHref: SplitTOCHref,
 ) => {
   if (!items.length || !sections.length) return;
-
-  const sizes = sections.map((s) => (s.linear !== 'no' && s.size > 0 ? s.size : 0));
-  const cumulativeSizes = calculateCumulativeSizes(sections);
-  const totalSize = cumulativeSizes[cumulativeSizes.length - 1]! + sizes[sizes.length - 1]!;
-  const totalLocations = Math.floor(totalSize / SIZE_PER_LOC);
-
-  updateSectionLocations(sections, cumulativeSizes, sizes, totalLocations);
+  bakeSectionLocations(sections);
   const sectionsMap = createSectionsMap(sections);
   updateTocLocation(splitTOCHref, items, sections, sectionsMap);
 };

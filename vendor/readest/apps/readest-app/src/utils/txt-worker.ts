@@ -1,12 +1,14 @@
 import { TxtToEpubConverter } from './txt';
 import { getOSPlatform } from './misc';
-import { TxtConverterWorkerRequest, TxtConverterWorkerResponse } from './txt-worker-protocol';
+import { TxtConverterWorkerRequest, TxtConverterWorkerResponse, type TxtConversionProgress } from './txt-worker-protocol';
 
 interface ConvertTxtToEpubOptions {
   file: File;
   author?: string;
   language?: string;
   timeoutMs?: number;
+  onProgress?: (progress: TxtConversionProgress) => void;
+  prefetchText?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -43,6 +45,10 @@ const convertTxtToEpubInWorker = async (options: ConvertTxtToEpubOptions) => {
       }, timeoutMs);
 
       worker.onmessage = (event: MessageEvent<TxtConverterWorkerResponse>) => {
+        if (event.data.type === 'progress') {
+          options.onProgress?.(event.data.payload);
+          return;
+        }
         clearTimeout(timer);
 
         if (event.data.type === 'error') {
@@ -57,6 +63,7 @@ const convertTxtToEpubInWorker = async (options: ConvertTxtToEpubOptions) => {
           bookTitle,
           chapterCount,
           language: detectedLanguage,
+          prefetchedText,
         } = event.data.payload;
         cleanup();
         resolve({
@@ -64,6 +71,7 @@ const convertTxtToEpubInWorker = async (options: ConvertTxtToEpubOptions) => {
           bookTitle,
           chapterCount,
           language: detectedLanguage,
+          ...(prefetchedText ? { prefetchedText } : {}),
         });
       };
 
@@ -85,6 +93,7 @@ const convertTxtToEpubInWorker = async (options: ConvertTxtToEpubOptions) => {
           file,
           author,
           language,
+          prefetchText: options.prefetchText,
         },
       };
       worker.postMessage(request);

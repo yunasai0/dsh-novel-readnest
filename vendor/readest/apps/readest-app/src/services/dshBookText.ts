@@ -1,459 +1,290 @@
 import type { BookDoc } from '@/libs/document';
-import type { FoliateView } from '@/types/view';
-import type {
-  BookChapter,
-  BookPoint,
-  BookRequest,
-  ChapterRef,
-  ReaderResult,
-} from '@dsh-reader/protocol';
+import type { BookChapter, BookPoint, BookRange, BookRequest, ReaderResult } from '@dsh-reader/protocol';
+import { compareBookPoints } from '@dsh-reader/reading-progress';
+import { clipBookRanges, countTextCharacters, mergeBookRanges, textEndWithinBudget, validBookRange } from '@dsh-reader/reading-ranges';
+import { chapterNumberOf, volumeMatches, volumeNumberOf } from '@dsh-reader/chapter-numbers';
+import { budgetNotice, directoryRecovery, novelError, spoilerNotice } from '@dsh-reader/novel-errors';
+import { buildNovelIndex, isChapterId, type IndexedChapter } from './novel/novelIndex';
+import { extractBookText, paragraphAt, type SectionText } from './novel/text';
+export { comparable, extractBookText, paragraphAt, textOffset } from './novel/text';
 
-const ignored = 'script,style,head,template,[hidden],[aria-hidden="true"],[cfi-inert]';
-const block = 'p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre,section,article,td,body';
-export const comparable = (text: string) => text.replace(/\s+/g, ' ').trim();
-
-export function extractBookText(doc: Document) {
-  const spans: { node: Text; start: number; end: number }[] = [];
-  const paragraphs: { start: number; end: number }[] = [];
-  const parts: string[] = [];
-  let length = 0;
-  let parent: Element | null = null;
-  if (doc.body) {
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
-      if (node.parentElement?.closest(ignored)) continue;
-      const group = node.parentElement?.closest(block) ?? doc.body;
-      if (group !== parent && !node.data.trim()) continue;
-      if (group !== parent || paragraphs.length === 0) {
-        if (length) {
-          parts.push('\n\n');
-          length += 2;
-        }
-        parent = group;
-        paragraphs.push({ start: length, end: length });
-      }
-      parts.push(node.data);
-      spans.push({ node, start: length, end: length + node.length });
-      length += node.length;
-      paragraphs[paragraphs.length - 1]!.end = length;
-    }
-  }
-  return { text: parts.join(''), paragraphs, spans };
-}
-
-type SectionText = ReturnType<typeof extractBookText>;
-
-export function textOffset(range: Range, book: SectionText, end: boolean) {
-  const point = range.cloneRange();
-  point.collapse(!end);
-  const { startContainer, startOffset } = point;
-  let previous = 0;
-  for (const span of book.spans) {
-    if (span.node === startContainer) return span.start + startOffset;
-    if (point.comparePoint(span.node, 0) >= 0) return end ? previous : span.start;
-    previous = span.end;
-  }
-  return previous;
-}
-
-export function paragraphAt(section: SectionText, offset: number) {
-  let first = 0;
-  let last = section.paragraphs.length;
-  while (first < last) {
-    const middle = (first + last) >>> 1;
-    if (section.paragraphs[middle]!.end <= offset) first = middle + 1;
-    else last = middle;
-  }
-  return Math.min(first, Math.max(0, section.paragraphs.length - 1));
-}
-
-
-const comparePoints = (a: BookPoint, b: BookPoint) => a.section - b.section || a.offset - b.offset;
-const fallbackBlockSize = 16_000;
-const digits = '零一二三四五六七八九';
-const numerals = '0-9零〇一二两三四五六七八九十百千万';
-
-function readNumber(value?: string): number | undefined {
-  if (!value) return;
-  if (/^\d+$/.test(value)) return Number(value) || undefined;
-  if (/^[ivxlcdm]+$/i.test(value)) {
-    const roman: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
-    const numbers = [...value.toLowerCase()].map((c) => roman[c]!);
-    return numbers.reduce((sum, n, i) => sum + (n < (numbers[i + 1] ?? 0) ? -n : n), 0) || undefined;
-  }
-  const digitOf = (c: string) => digits.indexOf(c === '〇' ? '零' : c === '两' ? '二' : c);
-  if (![...value].some((c) => '十百千万'.includes(c))) {
-    return Number([...value].map(digitOf).join('')) || undefined;
-  }
-  const units: Record<string, number> = { 十: 10, 百: 100, 千: 1000, 万: 10000 };
-  let total = 0;
-  let part = 0;
-  let digit = 0;
-  for (const c of value) {
-    const unit = units[c];
-    if (unit === 10000) {
-      total += (part + digit || 1) * unit;
-      part = digit = 0;
-    } else if (unit) {
-      part += (digit || 1) * unit;
-      digit = 0;
-    } else {
-      digit = Math.max(0, digitOf(c));
-    }
-  }
-  return total + part + digit || undefined;
-}
-const chapterNumber = (title: string) => readNumber(
-  title.match(new RegExp('第\\s*([' + numerals + ']+)\\s*[章回节]'))?.[1] ??
-  title.match(/\bchapter\s+(\d+|[ivxlcdm]+)\b/i)?.[1],
-);
-const volumeNumber = (title: string) => readNumber(
-  title.match(new RegExp('第?\\s*([' + numerals + ']+)\\s*[卷部]'))?.[1] ??
-  title.match(new RegExp('^[卷部]\\s*([' + numerals + ']+)'))?.[1] ??
-  title.match(/\b(?:volume|vol\.?|book)\s+(\d+|[ivxlcdm]+)\b/i)?.[1],
-);
-
-type Volume = { volume: number; volumeTitle: string };
-type Mark = { title: string; href: string; number?: number; volume?: number; volumeTitle?: string };
-type ChapterPart = { entry: BookChapter; start: number; end: number };
-
-function safeOffset(text: string, offset: number) {
-  const code = text.charCodeAt(offset);
-  return code >= 0xdc00 && code <= 0xdfff ? offset - 1 : offset;
-}
-
-export function createBookText(book: BookDoc, getView: () => FoliateView | null) {
+export function createBookText(book: BookDoc, bookHash: string) {
   const sections = new Map<number, Promise<{ doc: Document; body: SectionText } | undefined>>();
-  // Keep the chapter boundaries after evicting a document. They are independent of reflow.
-  const indexedParts = new Map<number, Promise<ChapterPart[]>>();
-  let catalog: { marks: Map<number, Mark[]>; volumes: Map<number, Volume> } | undefined;
-
-  function directory() {
-    if (catalog) return catalog;
-    const byHref = new Map(book.sections.flatMap((section, i) => section.href ? [[section.href, i] as const] : []));
-    const marks = new Map<number, Mark[]>();
-    const volumes = new Map<number, Volume>();
-    const taken = new Set<number>();
-    function collect(items: BookDoc['toc']) {
-      for (const item of items ?? []) {
-        const number = volumeNumber(item.label ?? '');
-        if (number) taken.add(number);
-        collect(item.subitems);
-      }
-    }
-    collect(book.toc);
-    let nextVolume = 1;
-    function inferVolume() {
-      while (taken.has(nextVolume)) nextVolume++;
-      taken.add(nextVolume);
-      return nextVolume++;
-    }
-    function visit(items: BookDoc['toc'], inherited?: Volume) {
-      let current = inherited;
-      const groups = items?.filter((item) => item.subitems?.length && !chapterNumber(item.label ?? '')).length ?? 0;
-      for (const item of items ?? []) {
-        const title = item.label?.trim().slice(0, 160);
-        const number = title ? chapterNumber(title) : undefined;
-        const namedVolume = title ? volumeNumber(title) : undefined;
-        const group = !number && (namedVolume || (!inherited && groups > 1 && item.subitems?.length));
-        if (title && (group || namedVolume)) {
-          current = { volume: namedVolume ?? inferVolume(), volumeTitle: number ? '第 ' + namedVolume + ' 卷' : title };
-        }
-        const [href] = item.href ? book.splitTOCHref(item.href) : [];
-        let index = typeof href === 'string' ? byHref.get(href) : undefined;
-        if (index === undefined && typeof href === 'string') {
-          try { index = byHref.get(decodeURI(href)); } catch { /* broken TOC target */ }
-        }
-        if (index === undefined && item.href) index = getView()?.resolveNavigation(item.href)?.index;
-        if (index !== undefined && book.sections[index]) {
-          if (current && !volumes.has(index)) volumes.set(index, current);
-          if (title && !group) {
-            const entries = marks.get(index) ?? [];
-            entries.push({ title, href: item.href, ...(number ? { number } : {}), ...current });
-            marks.set(index, entries);
-          }
-        }
-        visit(item.subitems, current);
-      }
-    }
-    visit(book.toc);
-    // Unnamed spine items between two chapters inherit the preceding volume.
-    let volume: Volume | undefined;
-    for (let section = 0; section < book.sections.length; section++) {
-      const known = volumes.get(section);
-      if (known) volume = known;
-      else if (volume) volumes.set(section, volume);
-    }
-    catalog = { marks, volumes };
-    return catalog;
-  }
-
-  function load(index: number) {
-    const cached = sections.get(index);
-    if (cached) {
-      sections.delete(index);
-      sections.set(index, cached);
-      return cached;
-    }
-    const section = book.sections[index];
-    if (!section) return Promise.resolve(undefined);
-    const promise = Promise.resolve().then(() => section.createDocument())
-      .then((doc) => doc?.body ? { doc, body: extractBookText(doc) } : undefined)
-      .catch(() => undefined);
-    sections.set(index, promise);
+  const index = book.novelIndex ? Promise.resolve(book.novelIndex) : buildNovelIndex(book, bookHash)
+    .then((value) => (book.novelIndex = value));
+  void index.catch(() => {});
+  function load(section: number) {
+    const cached = sections.get(section);
+    if (cached) { sections.delete(section); sections.set(section, cached); return cached; }
+    const source = book.sections[section];
+    if (!source) return Promise.resolve(undefined);
+    const pending = Promise.resolve().then(() => source.createDocument())
+      .then((doc) => doc?.body ? { doc, body: extractBookText(doc) } : undefined).catch(() => undefined);
+    sections.set(section, pending);
     if (sections.size > 5) sections.delete(sections.keys().next().value!);
-    return promise;
+    return pending;
   }
-
-  function anchorOffset(mark: Mark, data: { doc: Document; body: SectionText }) {
-    const { doc, body } = data;
-    const [, fragment] = book.splitTOCHref(mark.href);
-    if (fragment === undefined || fragment === '') return 0;
-    if (typeof fragment !== 'string') return;
-    let id = fragment;
-    try { id = decodeURIComponent(fragment); } catch { /* malformed encoding */ }
-    const node = doc.getElementById(id) ?? doc.getElementById(fragment) ?? doc.getElementsByName(id)[0];
-    if (!node || !doc.body.contains(node) || node.closest(ignored)) return;
-    if (node === doc.body) return 0;
-    const range = doc.createRange();
-    range.setStartBefore(node);
-    range.collapse(true);
-    const offset = textOffset(range, body, false);
-    return offset < body.text.length ? offset : undefined;
-  }
-
-  function parts(section: number) {
-    const cached = indexedParts.get(section);
-    if (cached) return cached;
-    const promise = load(section).then((data): ChapterPart[] => {
-      const { marks, volumes } = directory();
-      const own = marks.get(section) ?? [];
-      const size = data?.body.text.length || Infinity;
-      const offsets = new Map<number, Mark | undefined>();
-      if (data) {
-        for (const mark of own) {
-          const offset = anchorOffset(mark, data);
-          if (offset === undefined) continue;
-          const existing = offsets.get(offset);
-          if (!existing || (!existing.number && mark.number)) offsets.set(offset, mark);
-        }
-        if (!offsets.size) {
-          const { text, paragraphs } = data.body;
-          let start = 0;
-          while (text.length - start > fallbackBlockSize) {
-            const desired = start + fallbackBlockSize;
-            const paragraph = paragraphs[paragraphAt(data.body, desired)];
-            start = paragraph && paragraph.start > start ? paragraph.start : safeOffset(text, desired);
-            offsets.set(start, undefined);
-          }
-        }
-      } else if (own[0]) {
-        offsets.set(0, own[0]);
-      }
-      if (!offsets.has(0)) offsets.set(0, undefined);
-      const starts = [...offsets.keys()].sort((a, b) => a - b);
-      return starts.map((start, i) => {
-        const mark = offsets.get(start);
-        const sequence = section + 1;
-        const part = i + 1;
-        const entry: BookChapter = {
-          id: 'section-' + sequence + (i ? '-part-' + part : ''),
-          title: mark?.title ?? '正文 · 第 ' + sequence + ' 节' + (starts.length > 1 ? ' · 第 ' + part + ' 段组' : ''),
-          sequence,
-          ...(starts.length > 1 ? { part } : {}),
-          ...volumes.get(section),
-          ...(mark?.volume ? { volume: mark.volume, volumeTitle: mark.volumeTitle } : {}),
-          ...(mark?.number ? { number: mark.number } : {}),
-        };
-        return { entry, start, end: starts[i + 1] ?? size };
-      });
-    });
-    indexedParts.set(section, promise);
-    return promise;
-  }
-
   async function chapterAt(point: BookPoint) {
-    const entries = await parts(point.section);
-    return entries.find((part) => point.offset < part.end) ?? entries.at(-1);
+    return (await index).chapters.find((chapter) =>
+      compareBookPoints(chapter.start, point) <= 0 && compareBookPoints(point, chapter.end) < 0);
+  }
+  async function paragraphNumber(point: BookPoint) {
+    const chapter = await chapterAt(point);
+    if (!chapter) return 1;
+    const data = await index;
+    let count = 0;
+    for (let section = chapter.start.section; section <= point.section; section++) {
+      for (const [start, end] of data.sections[section]!.paragraphs) {
+        if (section === chapter.start.section && end <= chapter.start.offset) continue;
+        if (section === point.section && start > point.offset) break;
+        count++;
+      }
+    }
+    return Math.max(1, count);
+  }
+  async function location(point: BookPoint, end = false) {
+    const data = await index;
+    let section = point.section, offset = point.offset;
+    while (end && offset === 0 && section > 0) offset = data.sections[--section]!.length;
+    const source = await load(section);
+    const probe = { section, offset: end ? Math.max(0, offset - 1) : offset };
+    const paragraph = source?.body.paragraphs[paragraphAt(source.body, probe.offset)];
+    return { paragraph: await paragraphNumber(probe),
+      character: source && paragraph ? countTextCharacters(source.body.text.slice(paragraph.start, offset)) + 1 : 1 };
+  }
+
+  async function moveCharacters(point: BookPoint, count: number, forward: boolean): Promise<BookPoint> {
+    const data = await index;
+    let section = point.section, offset = point.offset;
+    while (count > 0) {
+      const source = await load(section);
+      if (!source) break;
+      if (forward && offset === source.body.text.length) {
+        if (section + 1 >= data.sections.length || count < 2) break;
+        section++; offset = 0; count -= 2; continue;
+      }
+      if (!forward && offset === 0) {
+        if (!section || count < 2) break;
+        offset = data.sections[--section]!.length; count -= 2; continue;
+      }
+      if (forward) offset += source.body.text.codePointAt(offset)! > 0xffff ? 2 : 1;
+      else {
+        offset--;
+        if (offset > 0 && /[\uDC00-\uDFFF]/.test(source.body.text[offset]!) && /[\uD800-\uDBFF]/.test(source.body.text[offset - 1]!)) offset--;
+      }
+      count--;
+    }
+    return { section, offset };
+  }
+
+  async function anchorCharacters(ranges: BookRange[], cap: number) {
+    let total = 0;
+    for (const range of ranges) {
+      for (let section = range.start.section; section <= range.end.section; section++) {
+        const source = await load(section);
+        if (!source) continue;
+        const from = section === range.start.section ? range.start.offset : 0;
+        const until = section === range.end.section ? range.end.offset : source.body.text.length;
+        const end = textEndWithinBudget(source.body.text, from, until, cap - total);
+        total += countTextCharacters(source.body.text.slice(from, end));
+        if (total >= cap) return total;
+      }
+    }
+    return total;
   }
 
   async function answer(request: BookRequest): Promise<ReaderResult> {
-    const { query, snapshot, protectedReading, resume, limit } = request;
-    const cutoff = protectedReading ? request.cutoff : { section: book.sections.length - 1, offset: Infinity };
-    const allowed = (part: ChapterPart) => !protectedReading ||
-      comparePoints({ section: part.entry.sequence - 1, offset: part.start }, cutoff) < 0;
-    const spoilers = (): ReaderResult => ({ status: 'ok', chapters: [], stopReason: 'spoiler_limit' });
+    const data = await index;
+    const { chapters } = data;
+    const { query, snapshot, protectedReading, resume } = request;
+    const limit = Math.max(0, Math.floor(request.limit));
+    const bookEnd = { section: data.sections.length - 1, offset: data.sections.at(-1)!.length };
+    if (snapshot.indexVersion !== undefined && snapshot.indexVersion !== data.version) return novelError(
+      'INDEX_CHANGED', '本书的章节索引已经更新，原定位不能继续使用。', '请重新获取当前阅读位置或查询目录，再发起读取。', { next_call: directoryRecovery });
+    const cutoff = protectedReading ? request.cutoff : bookEnd;
+    const allowed = (chapter: IndexedChapter) => !protectedReading || compareBookPoints(chapter.start, cutoff) < 0;
+    const byId = new Map(chapters.map((chapter) => [chapter.chapter_id, chapter]));
+    const entry = (chapter: IndexedChapter): BookChapter => ({
+      chapter_id: chapter.chapter_id, title: chapter.title, kind: chapter.kind,
+      ...(chapter.kind === 'chapter' && chapterNumberOf(chapter.title) ? { chapter_number: chapterNumberOf(chapter.title) } : {}),
+      ...(chapter.volume_title ? { volume_title: chapter.volume_title, volume_number: volumeNumberOf(chapter.volume_title) } : {}),
+      ...(chapter.previous_id && allowed(byId.get(chapter.previous_id)!) ? { previous_id: chapter.previous_id } : {}),
+      ...(chapter.next_id && allowed(byId.get(chapter.next_id)!) ? { next_id: chapter.next_id } : {}),
+    });
+    const spoilers = (): ReaderResult => ({ status: 'blocked', chapters: [], stopReason: 'spoiler_limit',
+      limits: ['spoiler_limit'], message: spoilerNotice, end_notice: spoilerNotice });
     if (query.kind === 'contents') {
-      const entries: BookChapter[] = [];
-      let size = 0;
+      const keyword = query.query?.trim().normalize('NFKC').toLocaleLowerCase();
+      const matches = chapters.filter((chapter) => volumeMatches(chapter.volume_title, query.volume) &&
+        (!query.chapter_numbers?.length || query.chapter_numbers.includes(chapterNumberOf(chapter.title) ?? -1)) &&
+        (!keyword || ((chapter.volume_title ?? '') + ' ' + chapter.title).normalize('NFKC').toLocaleLowerCase().includes(keyword)));
+      const visible = matches.filter(allowed);
+      if (!visible.length && matches.length) return spoilers();
+      const contents: BookChapter[] = [];
       let last: BookPoint | undefined;
-      for (let section = resume?.section ?? 0; section <= cutoff.section; section++) {
-        if (query.volume && !directory().marks.has(section) && directory().volumes.get(section)?.volume !== query.volume) continue;
-        for (const part of await parts(section)) {
-          if (!allowed(part) || (query.volume && part.entry.volume !== query.volume)) continue;
-          if (resume?.section === section && part.start < resume.offset) continue;
-          const cost = JSON.stringify(part.entry).length + 1;
-          if (entries.length && (entries.length >= 30 || size + cost > limit)) {
-            return { status: 'ok', contents: entries, stopReason: 'batch_limit', last,
-              next: { section, offset: part.start } };
-          }
-          size += cost;
-          entries.push(part.entry);
-          last = { section, offset: part.start };
-        }
+      for (const chapter of visible) {
+        if (resume && compareBookPoints(chapter.start, resume) < 0) continue;
+        if (contents.length >= 30) return { status: 'partial', contents, stopReason: 'batch_limit', last, next: chapter.start };
+        contents.push(entry(chapter)); last = chapter.start;
       }
-      return { status: 'ok', contents: entries, stopReason: 'completed', ...(last ? { last } : {}) };
+      return { status: 'ok', contents, stopReason: 'completed', ...(last ? { last } : {}),
+        ...(!contents.length ? { message: '可查目录没有匹配项。可移除卷名/标题筛选，或用 chapter_numbers 按原书章号查询。' } : {}) };
     }
 
-    async function resolve(ref: ChapterRef, volume?: number, legacy = false): Promise<ChapterPart[]> {
-      if (ref === 'current') {
-        const current = await chapterAt(snapshot.start);
-        return current ? [current] : [];
-      }
-      if (typeof ref === 'string') {
-        const id = /^section-(\d+)(?:-part-\d+)?$/.exec(ref);
-        if (!id) return [];
-        const section = Number(id[1]) - 1;
-        if (!book.sections[section]) return [];
-        if (protectedReading && section > cutoff.section) {
-          return [{ entry: { id: '', title: '', sequence: section + 1 }, start: 0, end: Infinity }];
-        }
-        return (await parts(section)).filter(({ entry }) => entry.id === ref && (!volume || entry.volume === volume));
-      }
-      const { marks, volumes } = directory();
-      const hasNumbers = !legacy && [...marks.values()].some((items) =>
-        items.some((item) => item.number && (!volume || item.volume === volume)));
-      if (hasNumbers) {
-        const matches: ChapterPart[] = [];
-        for (const [section, items] of marks) {
-          if (!items.some((item) => item.number === ref && (!volume || item.volume === volume))) continue;
-          if (protectedReading && section > cutoff.section) {
-            // Retain the existence of a match for a blocked result, without loading its text or title.
-            matches.push({ entry: { id: '', title: '', sequence: section + 1 }, start: 0, end: Infinity });
-            continue;
-          }
-          matches.push(...(await parts(section)).filter(({ entry }) => entry.number === ref && (!volume || entry.volume === volume)));
-        }
-        return matches.sort((a, b) => a.entry.sequence - b.entry.sequence || a.start - b.start);
-      }
-      let section = ref - 1;
-      if (volume) {
-        section = [...volumes].filter(([, item]) => item.volume === volume).map(([i]) => i).sort((a, b) => a - b)[ref - 1] ?? -1;
-      }
-      if (!book.sections[section]) return [];
-      if (protectedReading && section > cutoff.section) {
-        return [{ entry: { id: '', title: '', sequence: section + 1 }, start: 0, end: Infinity }];
-      }
-      return (await parts(section)).slice(0, 1);
-    }
-
-    let start: BookPoint;
-    let end: BookPoint;
+    let ranges: BookRange[];
     if (query.kind === 'near') {
-      const first = await load(snapshot.start.section);
-      const last = await load(snapshot.end.section);
-      if (!first || !last) return { status: 'unavailable', message: '当前页暂无可提取的文字。' };
-      start = { ...snapshot.start };
-      end = { ...snapshot.end };
-      if (query.before) {
-        start.offset = first.body.paragraphs[Math.max(0, paragraphAt(first.body, start.offset) - query.before)]?.start ?? start.offset;
+      ranges = mergeBookRanges(snapshot.selection?.ranges ??
+        (snapshot.selection?.start ? [{ start: snapshot.selection.start, end: snapshot.selection.end }] :
+          snapshot.visibleRanges ?? [{ start: snapshot.start, end: snapshot.end }]));
+      if (!ranges.length) return novelError('POSITION_UNAVAILABLE', '当前讨论片段没有可靠的正文定位。',
+        '请回到当前书页，重新选择原文或发送消息。');
+      const anchorStart = { ...ranges[0]!.start }, anchorEnd = { ...ranges.at(-1)!.end };
+      const anchorSize = await anchorCharacters(ranges, limit);
+      const first = ranges[0]!, last = ranges.at(-1)!;
+      let section = first.start.section;
+      let paragraphs = data.sections[section]!.paragraphs;
+      let p = paragraphs.findIndex(([, end]) => end > first.start.offset);
+      if (p < 0) p = Math.max(0, paragraphs.length - 1);
+      for (let n = 0; n < query.before; n++) {
+        if (p > 0) p--;
+        else if (section > 0) { section--; paragraphs = data.sections[section]!.paragraphs; p = paragraphs.length - 1; }
+        else break;
       }
-      if (query.after) {
-        end.offset = last.body.paragraphs[Math.min(last.body.paragraphs.length - 1,
-          paragraphAt(last.body, Math.max(0, end.offset - 1)) + query.after)]?.end ?? end.offset;
+      if (paragraphs[p]) first.start = { section, offset: paragraphs[p]![0] };
+      section = last.end.section;
+      let tailOffset = last.end.offset;
+      while (tailOffset === 0 && section > 0) tailOffset = data.sections[--section]!.length;
+      paragraphs = data.sections[section]!.paragraphs;
+      p = paragraphs.findIndex(([, end]) => end >= tailOffset);
+      if (p < 0) p = Math.max(0, paragraphs.length - 1);
+      for (let n = 0; n < query.after; n++) {
+        if (p + 1 < paragraphs.length) p++;
+        else if (section + 1 < data.sections.length) { section++; paragraphs = data.sections[section]!.paragraphs; p = 0; }
+        else break;
       }
+      if (paragraphs[p]) last.end = { section, offset: paragraphs[p]![1] };
+      // Optional context must not displace the current page/selection when one paragraph is huge.
+      const spare = Math.max(0, limit - anchorSize - 8);
+      const before = Math.min(1000, Math.floor(spare * 2 / 3));
+      const after = Math.min(500, spare - before);
+      const nearestStart = await moveCharacters(anchorStart, before, false);
+      const nearestEnd = await moveCharacters(anchorEnd, after, true);
+      if (compareBookPoints(first.start, nearestStart) < 0) first.start = nearestStart;
+      if (compareBookPoints(last.end, nearestEnd) > 0) last.end = nearestEnd;
+      ranges = mergeBookRanges(ranges);
+    } else if (query.kind === 'segments') {
+      ranges = mergeBookRanges(query.ranges);
     } else {
-      const refs = query.kind === 'range' ? query.chapters : [query.chapter];
-      const matches = await Promise.all(refs.map((ref) => resolve(ref, query.volume, query.kind === 'chapter' && query.legacy)));
-      if (matches.some((items) => !items.length)) return { status: 'not_found', message: '找不到指定章节，可先查询目录。' };
-      for (const [i, items] of matches.entries()) {
-        const candidates = items.filter(allowed);
-        if (candidates.length > 1) {
-          const last = candidates.at(-1)!;
-          return { status: 'ambiguous', candidates: candidates.map(({ entry }) => entry),
-            last: { section: last.entry.sequence - 1, offset: last.start },
-            message: '章节编号有多个匹配项，请用卷号或章节 ID 查询。' };
+      let selected: IndexedChapter[] = [];
+      if (query.kind === 'numbers') {
+        const resolveNumber = (number: number) => chapters.filter((chapter) => chapter.kind === 'chapter' &&
+          chapterNumberOf(chapter.title) === number && volumeMatches(chapter.volume_title, query.volume));
+        const starts = resolveNumber(query.start), ends = resolveNumber(query.end);
+        if (starts.length > 1 || ends.length > 1) {
+          const number = starts.length > 1 ? query.start : query.end;
+          const candidates = (starts.length > 1 ? starts : ends).filter(allowed);
+          return { ...novelError('AMBIGUOUS_CHAPTER', '原书第 ' + number + ' 章存在多个匹配，不能自动决定读取哪一处。',
+            '请提供明确卷名；若仍重号，请从 candidates 复制 ID，使用 read_chapter_ids。', {
+              next_call: { tool: 'novel_chapters', arguments: { chapter_numbers: [number] } },
+            }), candidates: candidates.map(entry), ...(candidates.length ? { last: candidates.at(-1)!.start } : {}) };
         }
-        if (candidates.length === 1) matches[i] = candidates;
-        else if (i === 0) return spoilers();
-        else matches[i] = [items[0]!];
+        if (!starts.length || !ends.length) return novelError('CHAPTER_NOT_FOUND',
+          '找不到原书第 ' + (!starts.length ? query.start : query.end) + ' 章' + (query.volume ? '（卷名：' + query.volume + '）' : '') + '。',
+          '数字只表示原书章号，不会回退为目录序号。请查询可读目录，核对卷名或改用章节 ID。', {
+            next_call: { tool: 'novel_chapters', arguments: { chapter_numbers: [!starts.length ? query.start : query.end] } },
+          });
+        selected = [starts[0]!, ends[0]!];
+      } else if (query.kind === 'ids') {
+        if (!query.chapter_ids.length || query.chapter_ids.some((id) => !isChapterId(id))) return novelError(
+          'INVALID_ARGUMENTS', 'chapter_ids 必须是非空的章节 ID 列表。', '请从 novel_chapters 返回的 chapter_id 复制，不要传章号或文件序号。', { next_call: directoryRecovery });
+        for (const id of [...new Set(query.chapter_ids)]) {
+          const chapter = byId.get(id);
+          if (!chapter) return novelError('CHAPTER_NOT_FOUND', '章节 ID 不属于当前书籍索引：' + id,
+            '书籍或索引可能已更换，请重新查询目录。', { next_call: directoryRecovery });
+          selected.push(chapter);
+        }
+      } else {
+        const firstId = query.kind === 'chapter' ? query.chapter_id : query.start_chapter_id;
+        const lastId = query.kind === 'chapter' ? query.chapter_id : query.end_chapter_id;
+        if (!isChapterId(firstId) || !isChapterId(lastId)) return novelError('INVALID_ARGUMENTS', '章节 ID 格式不正确。',
+          '请复制目录中的 chapter_id；按原书章号读取请使用 read_chapters。', { next_call: directoryRecovery });
+        const first = byId.get(firstId), last = byId.get(lastId);
+        if (!first || !last) return novelError('CHAPTER_NOT_FOUND', '章节 ID 不属于当前书籍索引。',
+          '请重新查询本书目录。', { next_call: directoryRecovery });
+        selected = [first, last];
       }
-      const first = matches[0]![0]!;
-      const last = matches.at(-1)![0]!;
-      start = { section: first.entry.sequence - 1, offset: first.start };
-      end = { section: last.entry.sequence - 1, offset: last.end };
-      if (query.kind === 'chapter' && query.legacy) {
-        const source = await load(end.section);
-        end.offset = source?.body.text.length || Infinity;
-      }
-      if (comparePoints(start, { section: end.section, offset: last.start }) > 0) {
-        return { status: 'invalid_request', message: '章节范围须按书中顺序。' };
-      }
-      if (query.kind === 'chapter' && query.paragraphs) {
-        const data = await load(start.section);
-        const [from, to] = query.paragraphs;
-        const base = data ? paragraphAt(data.body, first.start) : 0;
-        const paragraph = data?.body.paragraphs[base + from - 1];
-        if (!paragraph || paragraph.start >= first.end) return { status: 'not_found', message: '找不到指定段落。' };
-        start.offset = Math.max(first.start, paragraph.start);
-        end.offset = Math.min(first.end, data?.body.paragraphs[base + to - 1]?.end ?? Infinity);
+      if (query.kind === 'ids') ranges = mergeBookRanges(selected.map((chapter) => ({ start: chapter.start, end: chapter.end })));
+      else {
+        const first = selected[0]!, last = selected.at(-1)!;
+        if (compareBookPoints(first.start, last.start) > 0) return novelError('INVALID_ARGUMENTS',
+          '起始章节在原文中位于结束章节之后。', '原书章号可能乱序；请查询目录后，用 read_chapter_ids 明确选择所需章节。', { next_call: directoryRecovery });
+        ranges = [{ start: first.start, end: last.end }];
       }
     }
-    const clipped = protectedReading && comparePoints(end, cutoff) > 0;
-    if (clipped) end = cutoff;
-    if (resume && comparePoints(resume, start) > 0) start = resume;
-    if (comparePoints(start, end) >= 0) return clipped ? spoilers() : { status: 'ok', chapters: [], stopReason: 'completed' };
-
-    const chapters: NonNullable<ReaderResult['chapters']> = [];
+    if (ranges.some((range) => !validBookRange(range) || !data.sections[range.start.section] ||
+      !data.sections[range.end.section] || range.start.offset > data.sections[range.start.section]!.length ||
+      range.end.offset > data.sections[range.end.section]!.length)) return novelError('POSITION_OUTDATED',
+        '正文定位与当前书籍文件不一致。', '请重新打开本书并获取当前阅读位置，不要自行修改游标。');
+    const resolvedRanges = ranges;
+    const clipped = protectedReading && ranges.some((range) => compareBookPoints(range.end, cutoff) > 0);
+    ranges = clipBookRanges(ranges, resume ?? { section: 0, offset: 0 }, cutoff);
+    if (!ranges.length) return clipped ? spoilers() : { status: 'ok', chapters: [], stopReason: 'completed', resolvedRanges, deliveredRanges: [] };
+    const excerpts: NonNullable<ReaderResult['chapters']> = [];
+    const deliveredRanges: BookRange[] = [];
     let remaining = limit;
-    let last: BookPoint | undefined;
     let next: BookPoint | undefined;
-    sections: for (let section = start.section; section <= end.section; section++) {
-      const data = await load(section);
-      for (const part of await parts(section)) {
-        const from = Math.max(part.start, section === start.section ? start.offset : 0);
-        const requestedEnd = Math.min(part.end, section === end.section ? end.offset : Infinity);
-        const to = data ? safeOffset(data.body.text, requestedEnd) : requestedEnd;
-        if (!allowed(part) || from >= to) continue;
-        const overhead = JSON.stringify(part.entry).length + 155;
-        if (remaining < overhead + 4 && chapters.length) {
-          next = { section, offset: from };
-          break sections;
+    let last: BookPoint | undefined;
+    outer: for (const requested of ranges) {
+      for (const chapter of chapters) {
+        if (!allowed(chapter) || compareBookPoints(chapter.end, requested.start) <= 0 || compareBookPoints(chapter.start, requested.end) >= 0) continue;
+        const from = compareBookPoints(requested.start, chapter.start) > 0 ? requested.start : chapter.start;
+        const until = compareBookPoints(requested.end, chapter.end) < 0 ? requested.end : chapter.end;
+        if (!remaining) { next = from; break outer; }
+        let content = '';
+        let reached = from;
+        for (let section = from.section; section <= until.section; section++) {
+          if (section === until.section && until.offset === 0) { reached = until; break; }
+          const source = await load(section);
+          if (!source) return novelError('TEXT_SECTION_UNAVAILABLE',
+            '当前章节有一个正文文件无法读取，未提交本次同步进度。', '请重新打开本书后重试；若仍失败，请检查原书文件。', { retryable: true });
+          const low = section === from.section ? from.offset : 0;
+          const high = section === until.section ? until.offset : source.body.text.length;
+          if (low >= high) { reached = { section, offset: high }; continue; }
+          const separator = section > chapter.start.section && low === 0 ? '\n\n' : '';
+          if (remaining <= separator.length) { next = { section, offset: low }; break; }
+          const stop = textEndWithinBudget(source.body.text, low, high, remaining - separator.length);
+          if (stop <= low) { next = { section, offset: low }; break; }
+          const chunk = separator + source.body.text.slice(low, stop);
+          content += chunk; remaining -= countTextCharacters(chunk);
+          reached = { section, offset: stop };
+          if (stop < high) { next = reached; break; }
         }
-        remaining -= overhead;
-        if (!data?.body.text.length) {
-          chapters.push({ ...part.entry, coverage: 'unavailable' });
-          last = { section, offset: part.start };
-          continue;
+        if (content) {
+          const range = { start: from, end: reached };
+          excerpts.push({ ...entry(chapter), text: content,
+            coverage: compareBookPoints(from, chapter.start) === 0 && compareBookPoints(reached, chapter.end) === 0 ? 'full' : 'partial',
+            range, location: { start: await location(from), end: await location(reached, true) } });
+          let endSection = reached.section, endOffset = reached.offset;
+          while (endSection < data.sections.length - 1 && endOffset === data.sections[endSection]!.length) { endSection++; endOffset = 0; }
+          deliveredRanges.push({ start: from, end: { section: endSection, offset: endOffset } }); last = reached;
+        } else if (!next && compareBookPoints(from, reached) < 0) {
+          // Crossing an empty file boundary carries no text, but still closes that exact interval.
+          deliveredRanges.push({ start: from, end: reached });
         }
-        const { body } = data;
-        let batchEnd = Math.min(to, from + Math.max(0, remaining));
-        if (batchEnd < to) {
-          const boundary = body.paragraphs[paragraphAt(body, batchEnd)]?.start;
-          if (boundary !== undefined && boundary > from) batchEnd = boundary;
-        }
-        batchEnd = safeOffset(body.text, batchEnd);
-        if (batchEnd <= from) {
-          next = { section, offset: from };
-          break sections;
-        }
-        const base = paragraphAt(body, part.start);
-        const endPoint = { section, offset: batchEnd };
-        chapters.push({ ...part.entry, coverage: from === part.start && batchEnd === part.end ? 'full' : 'partial',
-          text: body.text.slice(from, batchEnd),
-          paragraphs: [paragraphAt(body, from) - base + 1, paragraphAt(body, batchEnd - 1) - base + 1],
-          range: { start: { section, offset: from }, end: endPoint } });
-        remaining -= batchEnd - from;
-        last = endPoint;
-        if (batchEnd < to) {
-          next = endPoint;
-          break sections;
-        }
+        if (next) break outer;
       }
     }
-    return { status: 'ok', chapters, ...(last ? { last } : {}), ...(next ? { next } : {}),
-      stopReason: next ? 'batch_limit' : clipped ? 'spoiler_limit' : 'completed' };
+    const limits: NonNullable<ReaderResult['limits']> = [];
+    if (clipped && !next) limits.push('spoiler_limit');
+    if (next || (!remaining && clipped)) limits.push('round_budget');
+    const notice = [limits.includes('spoiler_limit') ? spoilerNotice : '', limits.includes('round_budget') ? budgetNotice : ''].filter(Boolean).join('\n');
+    if (notice && excerpts.length) excerpts[excerpts.length - 1]!.end_notice = notice;
+    return { status: limits.length ? excerpts.length ? 'partial' : 'blocked' : 'ok',
+      chapters: excerpts, resolvedRanges, deliveredRanges: mergeBookRanges(deliveredRanges),
+      ...(last ? { last } : {}), ...(next ? { next } : {}),
+      ...(limits.length ? { limits, end_notice: notice, message: notice } : {}),
+      stopReason: next ? 'round_budget' : clipped ? 'spoiler_limit' : 'completed' };
   }
-  return { load, chapterAt, answer };
+  return { load, chapterAt, paragraphNumber, answer, getIndex: () => index };
 }
 

@@ -38,6 +38,8 @@ import { useLibraryStore } from './libraryStore';
 import { clearBookProgress, getBookProgress, setBookProgress } from './readerProgressStore';
 import { uniqueId } from '@/utils/misc';
 import { getWidePages, type WidePagesOptions } from '@/utils/spread';
+import { isDshReader } from '@/services/dshReader';
+import { setNovelPreparation } from '@/services/novel/preparationProgress';
 
 interface ViewState {
   /* Unique key for each book view */
@@ -295,6 +297,14 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
         await Promise.race([hashing, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }
       const config = await configPromise;
+      if (isDshReader() && docFormat === 'EPUB' && bookDoc.rendition?.layout !== 'pre-paginated') {
+        const { prepareNovelIndex } = await import('@/services/novel/novelIndex');
+        const progressId = 'open-' + key;
+        try {
+          await prepareNovelIndex(appService as unknown as FileSystem, bookDoc, book.hash, (completed, total) =>
+            setNovelPreparation(progressId, { title: book.title, kind: 'open', phase: 'indexing', completed, total }));
+        } finally { setNovelPreparation(progressId, null); }
+      }
       // Import annotations from third-party readers on first open. The
       // module import was already kicked off above; providers still run
       // here so the merged config lands before the first render.
@@ -318,7 +328,10 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
       config.booknotes = config.booknotes?.filter((booknote) => booknote.cfi) ?? [];
       // Load cached book navigation (TOC + section fragments) or compute and persist.
       // Feed manifests grow between opens, so feed books always recompute instead.
-      if (book.format === 'EPUB' && bookDoc.rendition?.layout !== 'pre-paginated') {
+      if (bookDoc.novelIndex) {
+        const { installNovelNavigation } = await import('@/services/novel/novelIndex');
+        installNovelNavigation(bookDoc);
+      } else if (book.format === 'EPUB' && bookDoc.rendition?.layout !== 'pre-paginated') {
         const cachedNav = isFeed ? null : await appService.loadBookNav(book);
         if (isBookNavCacheCurrent(cachedNav) && process.env.NODE_ENV === 'production') {
           hydrateBookNav(bookDoc, cachedNav);
