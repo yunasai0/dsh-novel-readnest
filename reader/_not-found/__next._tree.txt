@@ -4,4 +4,4 @@
 :HL["/novel-reader/study/private-study.css","style"]
 2:[["children",{"s":"__PAGE__","h":160}]]
 1:[["children",{"s":"_not-found","h":96,"c":"$Q2"}]]
-0:{"b":"D6-NJoohyebg_ibx_S_L7","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
+0:{"b":"hSWzUY7u1LEqArpG-sdba","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
