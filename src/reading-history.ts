@@ -25,14 +25,19 @@ export interface NovelEventData {
 
 export const novelEventData = (value: unknown): NovelEventData => value && typeof value === 'object' ? value as NovelEventData : {};
 
-function isStructuredFailure(data: NovelEventData) {
-  return (data.message?.content ?? data.content)?.some((block) => {
-    if (block.type !== 'text' || !block.text) return false;
-    try {
-      const result = JSON.parse(block.text);
-      return !!result.error?.code && (!Array.isArray(result.chapters) || result.chapters.every((chapter: { text?: string }) => !chapter.text));
-    } catch { return false; }
-  });
+function hasNoReadingExposure(data: NovelEventData) {
+  const blocks = data.message?.content ?? data.content;
+  const block = blocks?.[0];
+  if (blocks?.length !== 1 || block?.type !== 'text' || !block.text) return false;
+  try {
+    const result = JSON.parse(block.text);
+    if (result.error?.code && (!Array.isArray(result.chapters) || result.chapters.every((chapter: { text?: string }) => !chapter.text))) return true;
+    // beta.9/beta.10 omitted provenance on these two no-op synchronization paths.
+    // Recognize their empty receipt so existing conversations recover after upgrade.
+    return result.status === 'ok' && result.stop_reason === 'completed' && result.sync?.state === 'up_to_date' &&
+      Array.isArray(result.chapters) && result.chapters.length === 0 &&
+      result.contents === undefined && result.preview === undefined;
+  } catch { return false; }
 }
 
 interface Exposure {
@@ -43,7 +48,9 @@ interface Exposure {
 }
 const history = new WeakMap<NovelSession, Exposure>();
 
-export function historyConflict(session: NovelSession, book: string, snapshot: ReadingSnapshot) {
+export type ReadingHistoryConflict = 'unknown_exposure' | 'beyond_reading_boundary';
+
+export function readingHistoryConflict(session: NovelSession, book: string, snapshot: ReadingSnapshot): ReadingHistoryConflict | undefined {
   const state = history.get(session) ?? { scanned: 0, calls: new Set<string>(), unknown: false };
   history.set(session, state);
   function record(origin: { book?: string; point?: BookPoint }) {
@@ -65,7 +72,7 @@ export function historyConflict(session: NovelSession, book: string, snapshot: R
       const mark = data.meta?.novelReader;
       if (mark) record(mark);
       const call = data.message?.callId ?? data.message?.source?.callId;
-      if (!mark && call && state.calls.has(call) && !data.message?.isError && !isStructuredFailure(data)) state.unknown = true;
+      if (!mark && call && state.calls.has(call) && !data.message?.isError && !hasNoReadingExposure(data)) state.unknown = true;
       if (call) state.calls.delete(call);
     }
     if (type === 'user/message' && data.source?.kind === 'runtime-context') {
@@ -79,5 +86,10 @@ export function historyConflict(session: NovelSession, book: string, snapshot: R
       }
     }
   }
-  return state.unknown || (state.last !== undefined && compareBookPoints(state.last, spoilerBoundaryOf(snapshot)) > 0);
+  if (state.last !== undefined && compareBookPoints(state.last, spoilerBoundaryOf(snapshot)) > 0) return 'beyond_reading_boundary';
+  return state.unknown ? 'unknown_exposure' : undefined;
+}
+
+export function historyConflict(session: NovelSession, book: string, snapshot: ReadingSnapshot) {
+  return readingHistoryConflict(session, book, snapshot) !== undefined;
 }

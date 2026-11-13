@@ -3,4 +3,4 @@
 :HL["/novel-reader/study/fonts/font.css","style"]
 :HL["/novel-reader/study/private-study.css","style"]
 1:[["children",{"s":"__PAGE__","h":128}]]
-0:{"b":"hSWzUY7u1LEqArpG-sdba","t":{"t":{"s":"","h":16,"c":"$Q1"}}}
+0:{"b":"RmHyfdJe0UiT30iIIe-4r","t":{"t":{"s":"","h":16,"c":"$Q1"}}}

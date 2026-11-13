@@ -9,7 +9,7 @@ import { compareBookPoints, isBookPoint, spoilerBoundaryOf } from './reading-pro
 import { clipBookRanges, countTextCharacters, mergeBookRanges, subtractBookRanges, validBookRange } from './reading-ranges.js';
 import { budgetNotice, directoryRecovery, novelError, syncRecovery } from './novel-errors.js';
 import { readingSyncState, recoverReadTask } from './sync-history.js';
-import type { NovelSession } from './reading-history.js';
+import type { NovelSession, ReadingHistoryConflict } from './reading-history.js';
 export { compareBookPoints, isBookPoint } from './reading-progress.js';
 
 interface Prepared {
@@ -64,7 +64,7 @@ const compactSnapshot = (snapshot: ReadingSnapshot): ReadingSnapshot => {
 };
 
 export function createBookBridge(
-  conflict: (session: string, book: string, snapshot: ReadingSnapshot) => boolean,
+  conflict: (session: string, book: string, snapshot: ReadingSnapshot) => boolean | ReadingHistoryConflict | undefined,
   sessionOf: (id: string) => NovelSession | undefined = () => undefined,
 ) {
   const readers = new Map<string, Reader>();
@@ -120,6 +120,8 @@ export function createBookBridge(
     if (signal.aborted) return canceled();
     if (reader.active !== active) return novelError('TURN_CONTEXT_CHANGED', '本轮阅读快照已结束或权限发生变化。',
       '请重新发送消息，以新的阅读快照读取正文。');
+    const metadata: ReadingProvenance = { book: reader.book, owner: session, turn: active.turn,
+      indexVersion: active.snapshot.indexVersion ?? 0 };
     let task: ReadTask | undefined;
     if ('cursor' in input) {
       task = reader.cursors.get(input.cursor) ?? recoverReadTask(sessionOf(session), reader.book, input.cursor);
@@ -151,14 +153,14 @@ export function createBookBridge(
       query = { kind: 'segments', ranges: plan.ranges };
       if (!plan.ranges.length) return { status: 'ok', chapters: [], stopReason: 'completed',
         message: '截至本轮阅读位置，没有需要补齐的新正文；讨论回翻位置可使用 read_current。',
-        sync: { state: 'up_to_date', has_gaps: plan.has_gaps, target: plan.target } };
+        sync: { state: 'up_to_date', has_gaps: plan.has_gaps, target: plan.target }, source: metadata };
     } else query = input as BookQuery;
     if (task?.sync && query.kind === 'segments') {
       const left = clipBookRanges(query.ranges, task.resume ?? task.sync.baseline, task.sync.target);
       const missing = subtractBookRanges(left, active.state.covered);
       if (!missing.length) return { status: 'ok', chapters: [], stopReason: 'completed',
         message: '这个同步任务的正文已确认同步，无需重复读取。',
-        sync: { state: 'up_to_date', has_gaps: task.sync.has_gaps, target: task.sync.target } };
+        sync: { state: 'up_to_date', has_gaps: task.sync.has_gaps, target: task.sync.target }, source: metadata };
       query = { kind: 'segments', ranges: missing };
     }
     const frozen = task?.snapshot ?? active.snapshot;
@@ -167,8 +169,6 @@ export function createBookBridge(
     const cutoff = task?.boundary && (!active.protectedReading || compareBookPoints(task.boundary, readingBoundary) < 0)
       ? task.boundary : readingBoundary;
     const remaining = Math.max(0, roundBookBudget - active.used);
-    const metadata: ReadingProvenance = { book: reader.book, owner: session, turn: active.turn,
-      indexVersion: active.snapshot.indexVersion ?? 0 };
     const budget = (returned: number) => ({ limit_chars: roundBookBudget, returned_chars: returned,
       used_chars: active.used, remaining_chars: Math.max(0, roundBookBudget - active.used) });
     const cursorFor = (resume?: BookPoint, resolvedQuery = query): ReadTask => ({
@@ -362,8 +362,11 @@ export function createBookBridge(
           return;
         }
         const protectedReading = reader.protectedReading || body.protectedReading !== false;
-        if (protectedReading && conflict(session, book, snapshot)) {
-          json(res, 412, { message: '此会话曾查阅最远阅读位置之后的内容。请新建会话，或读到该位置后继续。' });
+        const historyIssue = protectedReading && conflict(session, book, snapshot);
+        if (historyIssue) {
+          json(res, 412, historyIssue === 'unknown_exposure'
+            ? { code: 'HISTORY_RANGE_UNKNOWN', message: '此会话有历史工具正文缺少可核对的阅读定位，无法确认是否位于已读范围内。这不代表已经确认读到了后文；请新建会话继续无剧透讨论。' }
+            : { code: 'HISTORY_BEYOND_READING_BOUNDARY', message: '此会话曾查阅最远阅读位置之后的内容。请新建会话，或读到该位置后继续。' });
           return;
         }
         reader.prepared = {

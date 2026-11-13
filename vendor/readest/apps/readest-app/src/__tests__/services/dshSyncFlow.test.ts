@@ -4,7 +4,7 @@ import type { BookDoc } from '@/libs/document';
 import { buildNovelIndex } from '@/services/novel/novelIndex';
 import { createBookText } from '@/services/dshBookText';
 import { createBookBridge, type BookBridge } from '@dsh-reader/book-bridge';
-import { snapshotLabel, type NovelSession } from '@dsh-reader/reading-history';
+import { historyConflict, snapshotLabel, type NovelSession } from '@dsh-reader/reading-history';
 import type { BookRequest, BookToolQuery, ReadingSnapshot } from '@dsh-reader/protocol';
 
 const identity = { book: 'sync-book-fixture', session: 'sync-session-fixture', token: 'sync-token-fixture', instance: 'sync-instance-one' };
@@ -65,7 +65,7 @@ describe('durable incremental reading flow', () => {
     doc.novelIndex = await buildNovelIndex(doc, identity.book);
     chapterId = doc.novelIndex.chapters[0]!.chapter_id;
     reader = createBookText(doc, identity.book);
-    bridge = createBookBridge(() => false, () => session);
+    bridge = createBookBridge((_session, book, value) => historyConflict(session, book, value), () => session);
     server = createServer((req, res) => { void bridge.handle(req, res); });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -94,7 +94,7 @@ describe('durable incremental reading flow', () => {
     expect(bridge.state(session.id).covered).toEqual([{ start: point(0), end: point(31000) }]);
 
     bridge.dispose(); events = JSON.parse(JSON.stringify(events));
-    bridge = createBookBridge(() => false, () => session);
+    bridge = createBookBridge((_session, book, value) => historyConflict(session, book, value), () => session);
     await post('hello', { indexVersion: 2 });
     await begin(snapshot(60000, 61000));
     const continuation = await dispatch({ cursor: first.nextCursor! });
@@ -105,6 +105,23 @@ describe('durable incremental reading flow', () => {
     expect(newest.budget?.used_chars).toBe(30000);
     finish('completed');
     expect(bridge.state(session.id).covered).toEqual([{ start: point(0), end: point(61000) }]);
+
+    await begin(snapshot(60000, 61000));
+    for (const [name, query] of [
+      ['continue_reading', { cursor: first.nextCursor! }],
+      ['sync_reading', { kind: 'sync' }],
+    ] as const) {
+      const callId = 'empty-' + name;
+      append('tool/call', { name, callId });
+      const { source, ...output } = await bridge.query(session.id, query, signal(), callId);
+      expect(source).toMatchObject({ book: identity.book, owner: session.id, turn });
+      expect(source?.point).toBeUndefined();
+      expect(output.chapters).toEqual([]);
+      append('tool/result', { message: { source: { callId }, content: [{ type: 'text', text: JSON.stringify(output) }] },
+        meta: { novelReader: source } });
+    }
+    finish('completed');
+    await begin(snapshot(60000, 61000));
   });
 
   it('retains the origin but never commits a canceled batch or skips it through an old cursor', async () => {

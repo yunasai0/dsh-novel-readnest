@@ -10,7 +10,7 @@ import { GET as catalogGet, HEAD as catalogHead } from '@/app/api/opds/proxy/rou
 import { edgeSpeechResponse } from '@/libs/edgeSpeechResponse';
 import { readerPath } from './path.js';
 import { createBookBridge, type BookBridge } from './book-bridge.js';
-import { historyConflict, type NovelSession } from './reading-history.js';
+import { readingHistoryConflict, type NovelSession } from './reading-history.js';
 import { companionEndpoint } from './protocol.js';
 import { readLimitedBody } from './request-body.js';
 
@@ -109,7 +109,7 @@ export function apply(ctx: HostContext) {
   ctx.effect(() => {
     const bridge = createBookBridge((id, book, snapshot) => {
       const agent = ctx.agents.get(id);
-      return !!agent && historyConflict(agent.session, book, snapshot);
+      return agent ? readingHistoryConflict(agent.session, book, snapshot) : undefined;
     }, (id) => ctx.agents.get(id)?.session);
     ctx.provide('novelReader', bridge);
 

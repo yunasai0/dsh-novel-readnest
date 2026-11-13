@@ -48,7 +48,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.10"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.11"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -64,16 +64,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.10/dsh-novel-readnest-0.2.0-beta.10.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.11/dsh-novel-readnest-0.2.0-beta.11.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-本次版本为 `v0.2.0-beta.10`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
+本次版本为 `v0.2.0-beta.11`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
 
-固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.10`。
+固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.11`。
 
 ### 手机和平板
 
@@ -91,6 +91,8 @@ https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.10/
 防剧透开关位于 AI 会话顶部。当前页面和选区决定讨论位置，防剧透边界则取本书曾显示过的最远正文位置，两者分别记录。直接跳到后面的页面也会推进边界；普通阅读时即可记录，无需打开 AI 面板。每条消息锁定发送时的边界，后续翻页影响下一条消息。
 
 关闭防剧透后，Agent 可以查询当前绑定书籍的全书正文，但它查到的后文不会推进用户的阅读边界。重新开启时，若会话已查过最远阅读位置之后的内容，需要新建会话，或读到该位置后继续。旧版本未记录的历史最远位置无法还原，升级后从当前页面开始累计。
+
+正常在同一页连续讨论不会要求新开会话；“没有新正文”的同步结果也不算查阅后文。`v0.2.0-beta.11` 修复了旧版对此类空结果的误判，升级并重启后可重新打开受影响的原会话继续讨论。
 
 ## 数据与服务
 

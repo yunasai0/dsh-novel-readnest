@@ -132,6 +132,17 @@ try {
   const firstCheckpoint = bridge.state(session.id).covered.at(-1).end;
   results.push({ case: 'current', characters: current.budget.returned_chars, committedAfterReply: true });
 
+  for (let i = 0; i < 2; i++) {
+    await begin();
+    const unchanged = await call('sync_reading');
+    assert.equal(unchanged.sync.state, 'up_to_date');
+    assert.deepEqual(unchanged.chapters, []);
+    assert.equal(unchanged.source.book, identity.book);
+    assert.equal(unchanged.source.point, undefined);
+    finish();
+  }
+  results.push({ case: 'unchanged-page-conversation', repeatedEmptySyncs: 2, nextTurnAdmitted: true });
+
   for (let i = 0; i < 3; i++) await frame.locator('foliate-view').evaluate((view) => view.next());
   await begin();
   const incremental = await call('sync_reading');
