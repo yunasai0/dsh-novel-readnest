@@ -29,6 +29,8 @@ pnpm run build
 
 长篇性能验证可运行 `node scripts/validate-novel-import.mjs <小说.txt> original,original,original <输出目录>`。原版使用本机文件路径选择，避免把自动化内存上传的解码开销混入插件耗时；格式破坏样本仍在内存中生成，其上传耗时不直接用于性能对比。进度截图可设置 `NOVEL_CAPTURE_PROGRESS=1`，截图运行不计入性能基准。检查正文校验、章节 ID 及 Worker 回退记录，不能仅比较耗时。
 
+全屏布局验证使用已安装待验证插件的独立 DSH 配置：`node scripts/validate-fullscreen.mjs <DSH运行目录> <测试DSH_HOME>`。脚本检查顶部覆盖、系统全屏状态切换、主题同步、Windows 预留和窄屏恢复，报告与截图保存在 `dist/fullscreen-validation/`。设置 `FULLSCREEN_COMPARE_BETA12=1` 可对照旧版露顶问题。平台属性与标题栏尺寸为模拟值，不能代替 Mac 原生窗口按钮和拖动的真机检查。
+
 ## 提交与发布
 
 更新根目录的 `package.json` 版本与 `CHANGELOG.md`，同步 README 中的安装示例，然后执行构建和打包。

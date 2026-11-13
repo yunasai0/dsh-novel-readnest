@@ -685,6 +685,36 @@ export function ReaderPanel({ services, ...slots }: PanelSlots & { services: Ses
   const [book, setBook] = useState<(ReaderBook & { quoteSnapshot?: ReadingSnapshot }) | null>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
+    const iframe = frame.current;
+    let observer: MutationObserver | undefined;
+    let repaint = 0;
+    const connectTheme = () => {
+      observer?.disconnect();
+      const doc = iframe?.contentDocument;
+      const view = iframe?.contentWindow;
+      if (!doc?.documentElement || !view) return;
+      const syncTheme = () => {
+        cancelAnimationFrame(repaint);
+        repaint = requestAnimationFrame(() => {
+          for (const element of [doc.querySelector('.library-page, .header-bar, main'), doc.body, doc.documentElement]) {
+            if (!element) continue;
+            const color = view.getComputedStyle(element).backgroundColor;
+            if (color && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') {
+              root.current?.style.setProperty('--nr-reader-paper', color);
+              break;
+            }
+          }
+        });
+      };
+      observer = new MutationObserver(syncTheme);
+      observer.observe(doc.documentElement, { attributes: true });
+      syncTheme();
+    };
+    iframe?.addEventListener('load', connectTheme);
+    connectTheme();
+    return () => { iframe?.removeEventListener('load', connectTheme); observer?.disconnect(); cancelAnimationFrame(repaint); };
+  }, []);
+  useEffect(() => {
     const measure = new ResizeObserver(([entry]) => { if (entry) setNarrow(entry.contentRect.width < 700); });
     const readerRoot = root.current;
     if (readerRoot) measure.observe(readerRoot);

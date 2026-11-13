@@ -13,7 +13,24 @@ export const companionStyle = `
   inset-block-end: max(env(safe-area-inset-bottom, 0px), var(--nr-viewport-bottom, 0px));
   left: env(safe-area-inset-left, 0px);
   right: env(safe-area-inset-right, 0px);
-  background: var(--dsw-alias-bg-base, #f7efe3);
+  background: var(--nr-reader-paper, var(--dsw-alias-bg-base, #f7efe3));
+}
+/* Paint over the macOS shell strip; reserve space inside the reader instead
+   of exposing the sidebar/titlebar underneath the fullscreen surface. */
+html[data-platform='darwin'] .nr-root[data-dsh-reader-fullscreen] {
+  --nr-mac-titlebar: var(--dsh-frame-top-clearance, 48px);
+  inset: 0; box-sizing: border-box;
+  padding-top: max(var(--nr-mac-titlebar), env(safe-area-inset-top, 0px), var(--nr-viewport-top, 0px));
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), var(--nr-viewport-bottom, 0px));
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+html[data-platform='darwin'] .nr-root[data-dsh-reader-fullscreen]::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: var(--nr-mac-titlebar);
+  -webkit-app-region: drag;
+}
+html[data-platform='darwin'][data-fullscreen] .nr-root[data-dsh-reader-fullscreen] {
+  --nr-mac-titlebar: 0px;
 }
 .nr-root > iframe { display: block; flex: 1 1 0; min-width: 0; width: 100%; height: 100%; border: 0; }
 .nr-reading-status { display: flex; flex-direction: column; gap: 3px; padding: 5px 12px 8px; font-size: 12px; line-height: 1.5; opacity: .8; }
