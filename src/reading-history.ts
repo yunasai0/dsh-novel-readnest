@@ -1,5 +1,4 @@
-import { compareBookPoints, isBookPoint, spoilerBoundaryOf } from './reading-progress.js';
-import type { BookPoint, ReadingProvenance, ReadingSnapshot } from './protocol.js';
+import type { ReadingProvenance } from './protocol.js';
 
 export const snapshotLabel = '小说阅读快照 ';
 export interface NovelSession {
@@ -24,72 +23,3 @@ export interface NovelEventData {
 }
 
 export const novelEventData = (value: unknown): NovelEventData => value && typeof value === 'object' ? value as NovelEventData : {};
-
-function hasNoReadingExposure(data: NovelEventData) {
-  const blocks = data.message?.content ?? data.content;
-  const block = blocks?.[0];
-  if (blocks?.length !== 1 || block?.type !== 'text' || !block.text) return false;
-  try {
-    const result = JSON.parse(block.text);
-    if (result.error?.code && (!Array.isArray(result.chapters) || result.chapters.every((chapter: { text?: string }) => !chapter.text))) return true;
-    // beta.9/beta.10 omitted provenance on these two no-op synchronization paths.
-    // Recognize their empty receipt so existing conversations recover after upgrade.
-    return result.status === 'ok' && result.stop_reason === 'completed' && result.sync?.state === 'up_to_date' &&
-      Array.isArray(result.chapters) && result.chapters.length === 0 &&
-      result.contents === undefined && result.preview === undefined;
-  } catch { return false; }
-}
-
-interface Exposure {
-  scanned: number;
-  calls: Set<string>;
-  last?: BookPoint;
-  unknown: boolean;
-}
-const history = new WeakMap<NovelSession, Exposure>();
-
-export type ReadingHistoryConflict = 'unknown_exposure' | 'beyond_reading_boundary';
-
-export function readingHistoryConflict(session: NovelSession, book: string, snapshot: ReadingSnapshot): ReadingHistoryConflict | undefined {
-  const state = history.get(session) ?? { scanned: 0, calls: new Set<string>(), unknown: false };
-  history.set(session, state);
-  function record(origin: { book?: string; point?: BookPoint }) {
-    if (origin.book !== book) {
-      state.unknown = true;
-      return;
-    }
-    if (isBookPoint(origin.point) && (!state.last || compareBookPoints(origin.point, state.last) > 0)) {
-      state.last = origin.point;
-    }
-  }
-  for (; state.scanned < session.seq; state.scanned++) {
-    const event = session.eventAt(state.scanned);
-    if (!event) continue;
-    const { type } = event;
-    const data = novelEventData(event.data);
-    if (type === 'tool/call' && data.name && ['read_novel', 'read_current', 'sync_reading', 'read_chapters', 'read_chapter_ids', 'novel_chapters', 'continue_reading'].includes(data.name) && data.callId) state.calls.add(data.callId);
-    if (type === 'tool/result' || type === 'tool/ptc-dispatch') {
-      const mark = data.meta?.novelReader;
-      if (mark) record(mark);
-      const call = data.message?.callId ?? data.message?.source?.callId;
-      if (!mark && call && state.calls.has(call) && !data.message?.isError && !hasNoReadingExposure(data)) state.unknown = true;
-      if (call) state.calls.delete(call);
-    }
-    if (type === 'user/message' && data.source?.kind === 'runtime-context') {
-      const line = data.content?.[0]?.text?.split('\n').find((item) => item.startsWith(snapshotLabel));
-      if (line) {
-        try {
-          record(JSON.parse(line.slice(snapshotLabel.length)));
-        } catch {
-          state.unknown = true;
-        }
-      }
-    }
-  }
-  if (state.last !== undefined && compareBookPoints(state.last, spoilerBoundaryOf(snapshot)) > 0) return 'beyond_reading_boundary';
-  return state.unknown ? 'unknown_exposure' : undefined;
-}
-
-export function historyConflict(session: NovelSession, book: string, snapshot: ReadingSnapshot) {
-  return readingHistoryConflict(session, book, snapshot) !== undefined;
-}

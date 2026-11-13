@@ -101,10 +101,11 @@ function askReader<T>(
   type: 'book-query' | 'book-snapshot',
   request: { id: string; quoteSnapshot?: ReadingSnapshot },
   signal: AbortSignal,
+  timeoutMs = 9000,
 ) {
   const reader = frame.current?.contentWindow;
   if (!reader) return Promise.resolve(undefined);
-  const deadline = AbortSignal.any([signal, AbortSignal.timeout(9000)]);
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
   return new Promise<T | undefined>((resolve) => {
     const abort = () => finish(undefined);
     const finish = (value: T | undefined) => {
@@ -130,7 +131,7 @@ function askReader<T>(
 }
 
 function NativeSession({
-  entry, book, frame, services, slots, view, protectedReading, newSession, quoteSnapshot, clearQuote, onSync, onReading,
+  entry, book, frame, services, slots, view, protectedReading, quoteSnapshot, clearQuote, onSync, onReading,
 }: {
   entry: Entry;
   book: string;
@@ -139,7 +140,6 @@ function NativeSession({
   slots: PanelSlots;
   view: View;
   protectedReading: boolean;
-  newSession(): void;
   quoteSnapshot?: ReadingSnapshot;
   clearQuote(snapshot: ReadingSnapshot): void;
   onSync(state: SyncState): void;
@@ -149,7 +149,6 @@ function NativeSession({
   protection.current = protectedReading;
   const [reference, setReference] = useState<SessionReference>();
   const [error, setError] = useState('');
-  const [sendError, setSendError] = useState<{ message: string; history?: boolean }>();
   const syncProtection = useRef<() => Promise<unknown> | undefined>(undefined);
   const pendingQuote = useRef(quoteSnapshot);
   const visibleQuote = useRef(quoteSnapshot);
@@ -195,7 +194,7 @@ function NativeSession({
         persona: selectedNovelPersona(readNovelPersonaSettings())?.prompt,
         quote,
         snapshot: askReader<ReadingSnapshot>(
-          frame, book, 'book-snapshot', { id: crypto.randomUUID(), quoteSnapshot: quote }, signal,
+          frame, book, 'book-snapshot', { id: crypto.randomUUID(), quoteSnapshot: quote }, signal, 1500,
         ),
       };
     };
@@ -218,49 +217,48 @@ function NativeSession({
         let prepared = false;
         let accepted = false;
         try {
-          const snapshot = await captured?.snapshot;
-          if (!snapshot || !captured) {
-            setSendError({ message: '暂时无法锁定正文位置，请回到小说当前页后重试。' });
-            throw new Error('阅读位置不可用');
-          }
-          setSendError(undefined);
-          await updateProtection();
-          const persona = captured.persona;
-          const preparation = { id, snapshot, protectedReading: captured.protectedReading };
-          let uploadPersona = persona && new Blob([requestBody('prepare', { ...preparation, persona })]).size >
-            companionRequestBodyLimit ? persona : undefined;
-          for (;;) {
+          // Reading context is optional enrichment, not a gate on native chat.
+          try {
+            const snapshot = await captured?.snapshot;
+            if (snapshot && captured) {
+              const preparationSignal = AbortSignal.any([abort, AbortSignal.timeout(2500)]);
+              await post('hello', { protectedReading: protection.current, indexVersion: snapshot.indexVersion }, preparationSignal);
+              const persona = captured.persona;
+              const preparation = { id, snapshot, protectedReading: captured.protectedReading };
+              let uploadPersona = persona && new Blob([requestBody('prepare', { ...preparation, persona })]).size >
+                companionRequestBodyLimit ? persona : undefined;
+              for (;;) {
+                preparationSignal.throwIfAborted();
+                const result = await post('prepare', {
+                  ...preparation,
+                  ...(uploadPersona ? { personaLength: uploadPersona.length } : { persona }),
+                }, preparationSignal);
+                if (!result?.rejected) { prepared = true; break; }
+                if (result.rejected === 413 && persona && !uploadPersona) { uploadPersona = persona; continue; }
+                if (result.rejected !== 409) throw new Error('阅读上下文暂不可用');
+                await new Promise((resolve) => setTimeout(resolve, 300));
+              }
+              if (uploadPersona) {
+                for (let offset = 0; offset < uploadPersona.length; offset += personaChunkLength) {
+                  await post('persona-chunk', {
+                    id, offset, chunk: uploadPersona.slice(offset, offset + personaChunkLength),
+                  }, preparationSignal);
+                }
+              }
+            }
+          } catch {
             abort.throwIfAborted();
-            const result = await post('prepare', {
-              ...preparation,
-              ...(uploadPersona ? { personaLength: uploadPersona.length } : { persona }),
-            }, abort);
-            if (!result?.rejected) {
-              prepared = true;
-              break;
-            }
-            if (result.rejected === 413 && persona && !uploadPersona) {
-              uploadPersona = persona;
-              continue;
-            }
-            if (result.rejected !== 409) {
-              setSendError({ message: result.message ?? '无法准备阅读上下文。', history: result.rejected === 412 });
-              throw new Error(result.message ?? '无法准备阅读上下文');
-            }
-            await new Promise((resolve) => setTimeout(resolve, 300));
+            if (prepared) void post('withdraw', { id }, AbortSignal.timeout(2500)).catch(() => {});
+            prepared = false;
           }
-          if (uploadPersona) {
-            for (let offset = 0; offset < uploadPersona.length; offset += personaChunkLength) {
-              await post('persona-chunk', {
-                id, offset, chunk: uploadPersona.slice(offset, offset + personaChunkLength),
-              }, abort);
-            }
-          }
-          const result = await originalPrompt.call(this, content, mode, abort, id);
+          abort.throwIfAborted();
+          const quoteText = !prepared && content.length ? captured?.quote?.selection?.text : undefined;
+          const delivered = quoteText ? [...content, { type: 'text', text: '用户引用的原文：\n' + quoteText }] : content;
+          const result = await originalPrompt.call(this, delivered, mode, abort, id);
           accepted = result.ok;
           if (accepted) {
             last = captured;
-            if (captured.quote) consumeQuote.current(captured.quote);
+            if (captured?.quote) consumeQuote.current(captured.quote);
           }
           return result;
         } finally {
@@ -278,12 +276,6 @@ function NativeSession({
       };
     };
     const run = async () => {
-      const initial = await askReader<ReadingSnapshot>(frame, book, 'book-snapshot', { id: crypto.randomUUID() }, signal);
-      if (signal.aborted) return;
-      if (initial?.reading) onReading(initial.reading);
-      await post('hello', { protectedReading: protection.current, indexVersion: initial?.indexVersion });
-      syncProtection.current = updateProtection;
-      if (signal.aborted) return;
       try {
         owned = services.sessions.retain(entry.id, { source: 'novelCompanion' });
       } catch {
@@ -295,16 +287,28 @@ function NativeSession({
       if (signal.aborted) return;
       restore = wrap(session);
       setReference(owned);
-      const syncState: SyncState = await post('state');
-      if (!signal.aborted) onSync(syncState);
       while (!signal.aborted) {
-        const request: BookPoll | null = await post('poll');
-        if (!request || signal.aborted) continue;
-        if ('type' in request && request.type === 'sync-state') { onSync(request.state); continue; }
-        if (!('query' in request)) continue;
-        const value = await askReader<ReaderResult>(frame, book, 'book-query', request, signal)
-          ?? { status: 'unavailable', message: '阅读器没有返回正文。' };
-        if (!signal.aborted) await post('reply', { id: request.id, value });
+        try {
+          const initial = await askReader<ReadingSnapshot>(frame, book, 'book-snapshot', { id: crypto.randomUUID() }, signal, 1500);
+          if (signal.aborted) return;
+          if (initial?.reading) onReading(initial.reading);
+          await post('hello', { protectedReading: protection.current, indexVersion: initial?.indexVersion });
+          syncProtection.current = updateProtection;
+          const syncState: SyncState = await post('state');
+          if (!signal.aborted) onSync(syncState);
+          while (!signal.aborted) {
+            const request: BookPoll | null = await post('poll');
+            if (!request || signal.aborted) continue;
+            if ('type' in request && request.type === 'sync-state') { onSync(request.state); continue; }
+            if (!('query' in request)) continue;
+            const value = await askReader<ReaderResult>(frame, book, 'book-query', request, signal)
+              ?? { status: 'unavailable', message: '阅读器没有返回正文。' };
+            if (!signal.aborted) await post('reply', { id: request.id, value });
+          }
+        } catch {
+          // Reconnect the optional reader bridge without replacing the chat UI.
+          if (!signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
       }
     };
     void run().catch((reason: unknown) => {
@@ -323,9 +327,6 @@ function NativeSession({
   if (!reference) return <p className="nr-message">正在打开 AI 会话…</p>;
   return (
     <slots.SessionProvider session={reference}>
-      {sendError && <p className="nr-message" role="alert">
-        {sendError.message}{sendError.history && <button type="button" onClick={newSession}>按已读范围新建会话</button>}
-      </p>}
       {slots.renderSlot(conversationSlot, { view })}
     </slots.SessionProvider>
   );
@@ -628,7 +629,7 @@ function BookPanel({
           {error && <p className="nr-error" role="alert">{error}</p>}
           {current ? (
             <NativeSession key={current.id} entry={current} book={book.id} frame={frame}
-              services={services} slots={slots} view={view} protectedReading={state.protectedReading} newSession={createSession}
+              services={services} slots={slots} view={view} protectedReading={state.protectedReading}
               onSync={setSyncState} onReading={setSessionReading}
               quoteSnapshot={book.quoteSnapshot} clearQuote={clearQuote} />
           ) : (
@@ -644,7 +645,7 @@ function BookPanel({
           <section role="dialog" aria-label="防剧透模式">
             <button className="nr-close" aria-label="关闭防剧透设置" onClick={() => setSettings(false)}>×</button>
             <h3>防剧透模式</h3>
-            <p>开启后，AI 可查阅从书籍开头到你曾读到的最远位置的内容，回翻不会缩小范围。直接跳到后面的页面也会推进这个边界。关闭后，AI 可以查阅全书。这个设置适用于本书的所有会话。</p>
+            <p>开启后，工具可查阅从书籍开头到你曾读到的最远位置的内容，回翻不会缩小范围。关闭后，工具可以查阅全书。这个设置只影响后续取文，不会限制继续对话，也不要求新建会话。</p>
             <label>启用防剧透 <input type="checkbox" role="switch" checked={state.protectedReading}
               onChange={(event) => {
                 const checked = event.currentTarget.checked;
@@ -684,7 +685,7 @@ export function ReaderPanel({ services, ...slots }: PanelSlots & { services: Ses
   const [book, setBook] = useState<(ReaderBook & { quoteSnapshot?: ReadingSnapshot }) | null>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
-    const measure = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width < 700));
+    const measure = new ResizeObserver(([entry]) => { if (entry) setNarrow(entry.contentRect.width < 700); });
     const readerRoot = root.current;
     if (readerRoot) measure.observe(readerRoot);
     const viewport = window.visualViewport;

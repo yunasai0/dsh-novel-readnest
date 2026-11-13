@@ -2,7 +2,7 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createBookBridge, type BookBridge } from '@dsh-reader/book-bridge';
-import { historyConflict, type NovelSession } from '@dsh-reader/reading-history';
+import type { NovelSession } from '@dsh-reader/reading-history';
 import type { BookPoint, BookRequest, ReadingSnapshot } from '@dsh-reader/protocol';
 
 const point = (section: number, offset = 10): BookPoint => ({ section, offset });
@@ -10,24 +10,6 @@ const identity = { book: 'book-test-001', session: 'session-test-001', token: 't
 const snapshot = (boundary?: BookPoint): ReadingSnapshot => ({
   title: '测试小说', chapter: '第一章', firstParagraph: 1, lastParagraph: 1,
   start: point(0, 0), end: point(0), ...(boundary ? { spoilerBoundary: boundary } : {}),
-});
-
-describe('reading-history protection', () => {
-  function session(exposed: BookPoint): NovelSession {
-    return { id: identity.session, seq: 1, eventAt: () => ({
-      type: 'tool/result', data: { meta: { novelReader: { book: identity.book, point: exposed } } },
-    }) };
-  }
-
-  it('allows revisiting earlier pages but still blocks history beyond the furthest read point', () => {
-    expect(historyConflict(session(point(2)), identity.book, snapshot(point(3)))).toBe(false);
-    expect(historyConflict(session(point(3)), identity.book, snapshot(point(3)))).toBe(false);
-    expect(historyConflict(session(point(4)), identity.book, snapshot(point(3)))).toBe(true);
-  });
-
-  it('keeps the conservative page-end fallback for older clients', () => {
-    expect(historyConflict(session(point(2)), identity.book, snapshot())).toBe(true);
-  });
 });
 
 describe('book bridge spoiler boundary', () => {
@@ -50,7 +32,7 @@ describe('book bridge spoiler boundary', () => {
 
   beforeEach(async () => {
     turn = 0;
-    bridge = createBookBridge(() => false);
+    bridge = createBookBridge(() => ({ id: identity.session, seq: 1, eventAt: () => ({ type: 'tool/result', data: { meta: { novelReader: { book: identity.book, point: point(9) } } } }) } satisfies NovelSession));
     server = createServer((req, res) => { void bridge.handle(req, res); });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();

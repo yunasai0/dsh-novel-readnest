@@ -1,6 +1,6 @@
 import { defineTool, ToolArgsError, type ParameterSchemaSpec } from '@deepseek-ai/dsh-tools';
 import { compareBookPoints, type BookBridge } from './book-bridge.js';
-import { historyConflict, snapshotLabel, type NovelSession } from './reading-history.js';
+import { snapshotLabel, type NovelSession } from './reading-history.js';
 import { assembleNovelPrompt } from './persona.js';
 import { isChapterId, type BookResult, type BookToolQuery, type NovelToolName } from './protocol.js';
 import { novelError, directoryRecovery } from './novel-errors.js';
@@ -59,12 +59,9 @@ export function apply(ctx: AgentContext) {
     if (!user) return decision;
     const rpcId = user.source?.rpcId;
     const active = rpcId ? bridge.admit(session.id, rpcId, turn, user.source?.kind === 'retry') : undefined;
-    const book = bridge.book(session.id);
-    if (!active || !book) return { kind: 'reject' };
-    if (active.protectedReading && historyConflict(session, book, active.snapshot)) {
-      bridge.finish(session.id, turn);
-      return { kind: 'reject' };
-    }
+    // A reading snapshot enables tools; it is never a condition for talking.
+    // Clear a stale turn rather than using its position for a context-free message.
+    if (!active) bridge.finish(session.id);
     return decision;
   });
   ctx.on('session/event', (session, event) => {
@@ -80,7 +77,7 @@ export function apply(ctx: AgentContext) {
       const session = agent.session.id;
       const active = bridge.active(session);
       const book = bridge.book(session);
-      if (!active || !book) return '';
+      if (!active || !book) return '本轮阅读定位暂不可用，可以正常继续交流。根据用户的问题、提供的原文和已有上下文回答；不要把旧快照当成当前定位，不必要求新建会话。需要新的正文依据时，说明目前无法取文即可。';
       const { title, chapter, chapter_id, endChapter, end_chapter_id, chapterSource, firstParagraph, lastParagraph, selection, start } = active.snapshot;
       // The position alone discloses a chapter title, not the text up to the page end.
       const heading = chapterSource ?? { section: start.section, offset: 0 };

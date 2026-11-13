@@ -9,7 +9,7 @@ import { compareBookPoints, isBookPoint, spoilerBoundaryOf } from './reading-pro
 import { clipBookRanges, countTextCharacters, mergeBookRanges, subtractBookRanges, validBookRange } from './reading-ranges.js';
 import { budgetNotice, directoryRecovery, novelError, syncRecovery } from './novel-errors.js';
 import { readingSyncState, recoverReadTask } from './sync-history.js';
-import type { NovelSession, ReadingHistoryConflict } from './reading-history.js';
+import type { NovelSession } from './reading-history.js';
 export { compareBookPoints, isBookPoint } from './reading-progress.js';
 
 interface Prepared {
@@ -30,7 +30,7 @@ interface Reader {
 export type ToolResult = BookResult & { source?: ReadingProvenance };
 const identity = /^[a-zA-Z0-9_-]{8,160}$/;
 const unavailable = () => novelError('READER_DISCONNECTED', '当前书籍的阅读器连接不可用。',
-  '请重新打开当前书籍的 AI 面板后再调用工具。');
+  '可以先根据已有内容正常交流；需要新的原文时，再回到书页恢复阅读定位后取文。无需新建会话。');
 const canceled = () => novelError('READ_CANCELED', '本次读取已取消，未推进同步进度。',
   '需要继续时重新发起当前读取或 sync_reading。', { next_call: syncRecovery });
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -64,7 +64,6 @@ const compactSnapshot = (snapshot: ReadingSnapshot): ReadingSnapshot => {
 };
 
 export function createBookBridge(
-  conflict: (session: string, book: string, snapshot: ReadingSnapshot) => boolean | ReadingHistoryConflict | undefined,
   sessionOf: (id: string) => NovelSession | undefined = () => undefined,
 ) {
   const readers = new Map<string, Reader>();
@@ -362,13 +361,6 @@ export function createBookBridge(
           return;
         }
         const protectedReading = reader.protectedReading || body.protectedReading !== false;
-        const historyIssue = protectedReading && conflict(session, book, snapshot);
-        if (historyIssue) {
-          json(res, 412, historyIssue === 'unknown_exposure'
-            ? { code: 'HISTORY_RANGE_UNKNOWN', message: '此会话有历史工具正文缺少可核对的阅读定位，无法确认是否位于已读范围内。这不代表已经确认读到了后文；请新建会话继续无剧透讨论。' }
-            : { code: 'HISTORY_BEYOND_READING_BOUNDARY', message: '此会话曾查阅最远阅读位置之后的内容。请新建会话，或读到该位置后继续。' });
-          return;
-        }
         reader.prepared = {
           id, snapshot, protectedReading, persona: customPersonaPrompt(body.persona), personaRemaining,
           expires: Date.now() + 90_000,

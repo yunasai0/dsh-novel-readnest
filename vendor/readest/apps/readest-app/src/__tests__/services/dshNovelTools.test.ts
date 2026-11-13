@@ -19,6 +19,31 @@ beforeEach(() => {
 });
 
 describe('single-purpose novel tools', () => {
+  it('never rejects a conversation because history is ahead or the reading snapshot is unavailable', async () => {
+    const handlers = new Map<string, Function>();
+    const admit = vi.fn();
+    const finish = vi.fn();
+    let runtimeContext: ((input: unknown) => string) | undefined;
+    const noop = () => () => {};
+    apply({ novelReader: { admit, finish, active: () => undefined, book: () => 'book-test' } as unknown as BookBridge,
+      tools: { register: noop },
+      systemPrompt: { section: noop, suppressRuntimeContext: noop, context(spec) { runtimeContext = spec.text as typeof runtimeContext; return noop(); } },
+      on(event, handler) { handlers.set(event, handler); return noop(); },
+    });
+    const session = { id: 'session-test', seq: 1, eventAt: () => ({ type: 'tool/result', data: {
+      meta: { novelReader: { book: 'book-test', point: { section: 9, offset: 500 } } },
+    } }) };
+    const decision = { kind: 'enter', messages: [{ source: { kind: 'user', rpcId: 'new-message' } }] };
+    admit.mockReturnValue({ protectedReading: true, snapshot: { end: { section: 0, offset: 10 } } });
+    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 2 }, async () => decision)).toBe(decision);
+    admit.mockReturnValue(undefined);
+    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 3 }, async () => decision)).toBe(decision);
+    expect(finish).toHaveBeenCalledWith(session.id);
+    expect(runtimeContext!({ agent: { session } })).toContain('可以正常继续交流');
+    const rejected = { kind: 'reject' };
+    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 3 }, async () => rejected)).toBe(rejected);
+  });
+
   it('exposes exactly six tools and keeps current/sync reading parameterless', async () => {
     expect([...tools.keys()]).toEqual(['read_current', 'sync_reading', 'read_chapters', 'read_chapter_ids', 'novel_chapters', 'continue_reading']);
     await tools.get('read_current')!.execute({}, exec);

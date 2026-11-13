@@ -6,6 +6,8 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 export default defineConfig({
   plugins: [tsconfigPaths(), react()],
   resolve: {
+    // Host-side companion components and the reader tests must share one React instance.
+    dedupe: ['react', 'react-dom'],
     alias: {
       // The @pdfjs alias from tsconfig only resolves within the app's own
       // source files.  foliate-js/pdf.js lives outside that scope, so Vite

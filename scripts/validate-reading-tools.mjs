@@ -77,12 +77,13 @@ const append = (type, data) => {
   const event = JSON.parse(JSON.stringify({ type, data }));
   events.push(event); listeners.get('session/event')?.(session, event);
 };
-async function begin() {
+async function begin(protectedReading = true) {
   const snapshot = await ask('book-snapshot');
   assert(snapshot?.reading && snapshot.indexVersion, 'Missing reading snapshot');
   const id = 'submission-' + ++turn;
   append('turn/start', { turn });
-  await post('prepare', { id, snapshot, protectedReading: true });
+  await post('protection', { protectedReading });
+  await post('prepare', { id, snapshot, protectedReading });
   const decision = await listeners.get('agent/pre-step')({ agent: { session }, turn }, async () => ({ kind: 'enter', messages: [{ source: { kind: 'user', rpcId: id } }] }));
   assert.equal(decision.kind, 'enter');
   const text = contextText({ agent: { session } });
@@ -186,6 +187,29 @@ try {
   finish();
   results.push({ case: 'continuation', reconnectRecovered: true, completeTextMatches: true, budgetShared: true });
   results.push({ case: 'errors', structuredParameterError: true, spoilerNotice: true, noSpoilerContinuation: true });
+
+  await begin(false);
+  const future = await call('read_chapters', { start: 8 });
+  assert(future.chapters.some(chapter => chapter.text.includes('【正文标记CH8')));
+  finish();
+  await begin();
+  const currentAgain = await call('read_current');
+  assert(currentAgain.chapters.length > 0);
+  const futureAgain = await call('read_chapters', { start: 8 });
+  assert.equal(futureAgain.stop_reason, 'spoiler_limit');
+  finish();
+  results.push({ case: 'free-conversation-after-future-read', nextTurnAdmitted: true, futureToolReadsStillRespectSetting: true });
+
+  append('turn/start', { turn: ++turn });
+  const withoutSnapshot = await listeners.get('agent/pre-step')({ agent: { session }, turn }, async () => ({
+    kind: 'enter', messages: [{ source: { kind: 'user', rpcId: 'message-without-reading-context' } }],
+  }));
+  assert.equal(withoutSnapshot.kind, 'enter');
+  assert(contextText({ agent: { session } }).includes('可以正常继续交流'));
+  const unavailable = await call('read_current');
+  assert.equal(unavailable.error.code, 'READER_DISCONNECTED');
+  finish();
+  results.push({ case: 'free-conversation-without-snapshot', nextTurnAdmitted: true, staleSnapshotNotReused: true });
   await stopPump(); await post('close');
   const oldBook = identity.book;
   await page.goto(url);
