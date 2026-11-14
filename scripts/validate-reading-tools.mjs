@@ -14,13 +14,14 @@ const output = join(root, 'dist/reading-tools-validation');
 await mkdir(output, { recursive: true });
 const events = [];
 const session = { id: 'validation-session', get seq() { return events.length; }, eventAt: (seq) => events[seq] };
+const agent = { session, ctx: { tools: { restrict: () => () => {} } } };
 const tools = new Map(), listeners = new Map(), routes = [];
 let bridge, cleanup, contextText;
 host({ agents: { get: (id) => id === session.id ? { session } : undefined },
   connection: { admit: () => ({ peer: {} }) }, effect(fn) { cleanup = fn(); },
   provide(name, value) { if (name === 'novelReader') bridge = value; return () => {}; },
   webServer: { register(route) { routes.push(route); return () => {}; } } });
-agentPlugin({ novelReader: bridge, tools: { register(tool) { tools.set(tool.name, tool); return () => {}; } },
+agentPlugin({ novelReader: bridge, tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, guard: () => () => {} }, effect() {},
   systemPrompt: { section: () => () => {}, suppressRuntimeContext: () => () => {}, context(spec) { contextText = spec.text; return () => {}; } },
   on(event, fn) { listeners.set(event, fn); return () => {}; } });
 const server = createServer(async (req, res) => {
@@ -84,7 +85,7 @@ async function begin(protectedReading = true) {
   append('turn/start', { turn });
   await post('protection', { protectedReading });
   await post('prepare', { id, snapshot, protectedReading });
-  const decision = await listeners.get('agent/pre-step')({ agent: { session }, turn }, async () => ({ kind: 'enter', messages: [{ source: { kind: 'user', rpcId: id } }] }));
+  const decision = await listeners.get('agent/pre-step')({ agent, turn }, async () => ({ kind: 'enter', messages: [{ source: { kind: 'user', rpcId: id } }] }));
   assert.equal(decision.kind, 'enter');
   const text = contextText({ agent: { session } });
   assert(!text.includes('【正文标记'), 'Text was automatically injected');
@@ -201,7 +202,7 @@ try {
   results.push({ case: 'free-conversation-after-future-read', nextTurnAdmitted: true, futureToolReadsStillRespectSetting: true });
 
   append('turn/start', { turn: ++turn });
-  const withoutSnapshot = await listeners.get('agent/pre-step')({ agent: { session }, turn }, async () => ({
+  const withoutSnapshot = await listeners.get('agent/pre-step')({ agent, turn }, async () => ({
     kind: 'enter', messages: [{ source: { kind: 'user', rpcId: 'message-without-reading-context' } }],
   }));
   assert.equal(withoutSnapshot.kind, 'enter');

@@ -13,7 +13,7 @@ beforeEach(() => {
   tools.clear(); query.mockReset().mockResolvedValue({ status: 'ok', chapters: [] });
   const noop = () => () => {};
   apply({ novelReader: { query, book: () => 'book-test' } as unknown as BookBridge,
-    tools: { register(tool) { tools.set(tool.name, tool); return () => {}; } },
+    tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, guard: noop }, effect: noop,
     systemPrompt: { section: noop, context: noop, suppressRuntimeContext: noop }, on: noop,
   });
 });
@@ -26,22 +26,23 @@ describe('single-purpose novel tools', () => {
     let runtimeContext: ((input: unknown) => string) | undefined;
     const noop = () => () => {};
     apply({ novelReader: { admit, finish, active: () => undefined, book: () => 'book-test' } as unknown as BookBridge,
-      tools: { register: noop },
+      tools: { register: noop, guard: noop }, effect: noop,
       systemPrompt: { section: noop, suppressRuntimeContext: noop, context(spec) { runtimeContext = spec.text as typeof runtimeContext; return noop(); } },
       on(event, handler) { handlers.set(event, handler); return noop(); },
     });
     const session = { id: 'session-test', seq: 1, eventAt: () => ({ type: 'tool/result', data: {
       meta: { novelReader: { book: 'book-test', point: { section: 9, offset: 500 } } },
     } }) };
+    const agent = { session, ctx: { tools: { restrict: noop } } };
     const decision = { kind: 'enter', messages: [{ source: { kind: 'user', rpcId: 'new-message' } }] };
     admit.mockReturnValue({ protectedReading: true, snapshot: { end: { section: 0, offset: 10 } } });
-    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 2 }, async () => decision)).toBe(decision);
+    expect(await handlers.get('agent/pre-step')!({ agent, turn: 2 }, async () => decision)).toBe(decision);
     admit.mockReturnValue(undefined);
-    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 3 }, async () => decision)).toBe(decision);
+    expect(await handlers.get('agent/pre-step')!({ agent, turn: 3 }, async () => decision)).toBe(decision);
     expect(finish).toHaveBeenCalledWith(session.id);
     expect(runtimeContext!({ agent: { session } })).toContain('可以正常继续交流');
     const rejected = { kind: 'reject' };
-    expect(await handlers.get('agent/pre-step')!({ agent: { session }, turn: 3 }, async () => rejected)).toBe(rejected);
+    expect(await handlers.get('agent/pre-step')!({ agent, turn: 3 }, async () => rejected)).toBe(rejected);
   });
 
   it('exposes exactly six tools and keeps current/sync reading parameterless', async () => {

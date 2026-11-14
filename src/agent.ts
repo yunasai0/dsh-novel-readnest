@@ -2,19 +2,23 @@ import { defineTool, ToolArgsError, type ParameterSchemaSpec } from '@deepseek-a
 import { compareBookPoints, type BookBridge } from './book-bridge.js';
 import { snapshotLabel, type NovelSession } from './reading-history.js';
 import { assembleNovelPrompt } from './persona.js';
-import { isChapterId, type BookResult, type BookToolQuery, type NovelToolName } from './protocol.js';
+import { companionPreset, isChapterId, novelToolNames, type BookResult, type BookToolQuery, type NovelToolName } from './protocol.js';
 import { novelError, directoryRecovery } from './novel-errors.js';
 import { spoilerBoundaryOf } from './reading-progress.js';
 
 export const name = 'novel-reader-agent';
 export const inject = ['novelReader', 'tools', 'systemPrompt'];
 
-type Agent = { session: NovelSession };
+type Agent = { session: NovelSession; ctx: { tools: { restrict(filter: { allow: string[] }): () => void } } };
 type UserMessage = { source?: { kind?: string; rpcId?: string } };
 type Step = { kind: 'reject' } | { kind: 'enter'; messages: UserMessage[] };
 interface AgentContext {
   novelReader: BookBridge;
-  tools: { register(definition: ReturnType<typeof defineTool>): () => void };
+  tools: {
+    register(definition: ReturnType<typeof defineTool>): () => void;
+    guard(check: (execution: { name: string }) => string | undefined): () => void;
+  };
+  effect(activate: () => () => void): void;
   systemPrompt: {
     section(spec: { name: string; order: number; complete: boolean; interpolate: boolean;
       text(input: { agent?: Agent }): string }): () => void;
@@ -24,6 +28,8 @@ interface AgentContext {
   };
   on(event: 'agent/pre-step', listener: (input: { agent: Agent; turn: number }, next: () => Promise<Step>) => Promise<Step>): () => void;
   on(event: 'session/event', listener: (session: NovelSession, event: { type: string; data: { turn?: number } }) => void): () => void;
+  on(event: 'agent/created' | 'agent/disposed', listener: (input: { agent: Agent }) => void): () => void;
+  on(event: 'agent-preset/selected', listener: (sessionId: string, preset: string) => void): () => void;
 }
 
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -43,6 +49,23 @@ function modelResult(result: BookResult & { source?: unknown }) {
 
 export function apply(ctx: AgentContext) {
   const bridge = ctx.novelReader;
+  const allowed = new Set<string>(novelToolNames);
+  const restrictions = new Map<Agent, () => void>();
+  const isolate = (agent: Agent) => {
+    if (!restrictions.has(agent)) restrictions.set(agent, agent.ctx.tools.restrict({ allow: [...novelToolNames] }));
+  };
+  const release = (agent: Agent) => { restrictions.get(agent)?.(); restrictions.delete(agent); };
+  // Mask inherited tools before any model step, including resumed sessions.
+  ctx.on('agent/created', ({ agent }) => isolate(agent));
+  ctx.on('agent/disposed', ({ agent }) => release(agent));
+  ctx.on('agent-preset/selected', (sessionId, preset) => {
+    if (preset !== companionPreset) for (const agent of restrictions.keys()) {
+      if (agent.session.id === sessionId) release(agent);
+    }
+  });
+  ctx.effect(() => () => { for (const agent of restrictions.keys()) release(agent); });
+  // Also reject guessed/stale names at execution time, not just in the catalog.
+  ctx.tools.guard(({ name }) => allowed.has(name) ? undefined : '小说陪读只提供当前书籍的阅读工具。');
   ctx.systemPrompt.suppressRuntimeContext();
   ctx.systemPrompt.section({
     name: 'novel-reader-persona',
@@ -52,6 +75,7 @@ export function apply(ctx: AgentContext) {
     text: ({ agent }) => assembleNovelPrompt(agent ? bridge.persona(agent.session.id) : undefined),
   });
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
+    isolate(agent);
     const decision = await next();
     if (decision.kind !== 'enter') return decision;
     const session = agent.session;

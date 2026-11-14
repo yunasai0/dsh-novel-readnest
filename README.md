@@ -48,7 +48,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.13"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.14"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -64,16 +64,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.13/dsh-novel-readnest-0.2.0-beta.13.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.14/dsh-novel-readnest-0.2.0-beta.14.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-本次版本为 `v0.2.0-beta.13`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
+本次版本为 `v0.2.0-beta.14`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
 
-固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.13`。
+固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.14`。
 
 ### 手机和平板
 
@@ -105,6 +105,8 @@ https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.13/
 支持识别带常见装饰前缀的章节标题，统一处理 CR、CRLF、LF 换行，并将密集的打印目录单独标记。能够判断的标题正文粘连会分开整理，正文中的说明句不会仅因含有「第几篇」就变成章节。索引算法升级时会重建缓存；旧会话中失效的章节 ID 需要通过目录重新获取。
 
 Agent 工具分别处理当前片段、增量同步、原书章号、章节 ID、目录和续读。`read_chapters` 的数字只表示原书章号，重号时通过卷名消歧；`read_chapter_ids` 的 ID 只从快照或目录复制，不能用文件序号或旧 `section-*` ID 代替。旧 `read_novel` 已拆分，旧会话记录仍可查看。
+
+书内会话绑定「小说陪读」专用预设，仅向模型提供下面六个工具。它不继承 DSH 或其他插件的工具，不提供终端、文件系统、网页、工具发现或 `run_code` 入口；实际调用也受同一工具范围限制。切换书内人设不会扩大工具权限。此限制只作用于小说预设，不改变 DSH 普通会话的工具。升级并重启后，恢复的小说会话也使用该范围，既有聊天记录保留。
 
 ```text
 read_current({})                     → 当前选区或可见正文，补前约 3 段、后约 2 段

@@ -31,6 +31,8 @@ pnpm run build
 
 全屏布局验证使用已安装待验证插件的独立 DSH 配置：`node scripts/validate-fullscreen.mjs <DSH运行目录> <测试DSH_HOME>`。脚本检查顶部覆盖、系统全屏状态切换、主题同步、Windows 预留和窄屏恢复，报告与截图保存在 `dist/fullscreen-validation/`。设置 `FULLSCREEN_COMPARE_BETA12=1` 可对照旧版露顶问题。平台属性与标题栏尺寸为模拟值，不能代替 Mac 原生窗口按钮和拖动的真机检查。
 
+工具隔离验证运行 `node scripts/validate-tool-isolation.mjs [DSH运行目录]`，省略参数时使用本项目的开发依赖。脚本使用实际 Cordis / DSH 工具与提示词服务，检查小说模型只得到六个工具、外部工具及动态新增工具不可见或执行、恢复会话生效，以及普通会话和预设切换不受影响；不调用模型服务。
+
 ## 提交与发布
 
 更新根目录的 `package.json` 版本与 `CHANGELOG.md`，同步 README 中的安装示例，然后执行构建和打包。
