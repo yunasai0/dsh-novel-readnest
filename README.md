@@ -43,12 +43,12 @@
 
 ## 安装
 
-支持官方 DSH `0.2.1` 系列（从 `0.2.1-rc.2` 起）及 `0.2.2-rc.1`、`0.2.2-rc.2`。插件包包含预构建模块与阅读页面，安装后由 DSH 直接加载。
+兼容范围覆盖 DSH `0.2.1-rc.2` 起的 `0.2.1` 版本线，以及从 `0.2.2-rc.1` 起、低于 `0.3` 的版本。后续 `0.2.x` 候选版和补丁版无需逐个放行。插件包包含预构建模块与阅读页面，安装后由 DSH 直接加载。
 
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.14"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.15"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -64,16 +64,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.14/dsh-novel-readnest-0.2.0-beta.14.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.15/dsh-novel-readnest-0.2.0-beta.15.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-本次版本为 `v0.2.0-beta.14`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
+本次版本为 `v0.2.0-beta.15`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
 
-固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.14`。
+固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.15`。
 
 ### 手机和平板
 
@@ -130,6 +130,7 @@ continue_reading({"cursor":"返回的next_cursor"}) → 继续原任务
 | Windows DSH Web `0.2.1-rc.2` | 已验证 TXT、EPUB、续读、Agent 查章、防剧透、朗读及人设切换 |
 | Windows DSH Web `0.2.2-rc.1` | 已验证安装、TXT 导入、打开正文和创建 AI 会话 |
 | Windows DSH Web `0.2.2-rc.2` | `v0.2.0-beta.10` 已验证兼容性检查、安装启动、TXT 导入、打开正文和创建书内 AI 会话；未调用模型服务 |
+| Windows DSH Web `0.2.2-rc.3` | `v0.2.0-beta.15` 已验证安装启动、TXT 导入、正文阅读、书内 AI 会话及工具隔离 |
 | Windows 官方桌面版 | `v0.2.0-beta.7` 已实测可正常安装和使用 |
 | macOS 官方桌面版 `0.2.2-rc.1` | `v0.2.0-beta.7` 已实测可正常安装和使用 |
 | 手机端 | 已在手机真机上验证可正常使用 |

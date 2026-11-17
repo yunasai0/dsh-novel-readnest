@@ -33,6 +33,8 @@ pnpm run build
 
 工具隔离验证运行 `node scripts/validate-tool-isolation.mjs [DSH运行目录]`，省略参数时使用本项目的开发依赖。脚本使用实际 Cordis / DSH 工具与提示词服务，检查小说模型只得到六个工具、外部工具及动态新增工具不可见或执行、恢复会话生效，以及普通会话和预设切换不受影响；不调用模型服务。
 
+DSH 兼容性验证运行 `node scripts/validate-dsh-compatibility.mjs <DSH运行目录> <插件安装包>`。脚本用 DSH 自身的版本检查器验证范围，并在临时配置中安装插件、启动 DSH Web、加载书库页面。GitHub Actions 每天从 npm 的 `latest` 和 `next` 渠道运行安装与工具隔离检查，以发现上游接口变更。
+
 ## 提交与发布
 
 更新根目录的 `package.json` 版本与 `CHANGELOG.md`，同步 README 中的安装示例，然后执行构建和打包。

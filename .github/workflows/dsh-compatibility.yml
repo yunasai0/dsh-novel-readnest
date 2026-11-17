@@ -1,0 +1,41 @@
+name: DSH compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: DSH @${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [latest, next]
+    env:
+      DSH_CHANNEL: ${{ matrix.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install plugin test dependencies
+        run: |
+          npm install --global pnpm@11.1.1
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install the current DSH runtime
+        run: npm install --prefix "$RUNNER_TEMP/dsh-runtime" --ignore-scripts --no-audit --no-fund "@deepseek-ai/dsh@$DSH_CHANNEL"
+      - name: Verify installation, startup and tool isolation
+        run: |
+          npm run pack:release
+          archive="dist/$(node -p 'let p = require("./package.json"); p.name + "-" + p.version + ".tgz"')"
+          node scripts/validate-dsh-compatibility.mjs "$RUNNER_TEMP/dsh-runtime" "$archive"
+          node scripts/validate-tool-isolation.mjs "$RUNNER_TEMP/dsh-runtime"
