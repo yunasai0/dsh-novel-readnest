@@ -123,6 +123,8 @@ export type BookMediaSource =
 
 export interface BookDoc {
   novelIndex?: import('@/services/novel/novelIndex').NovelIndex;
+  /** A failed optional text index applies only to this open document. */
+  novelIndexUnavailable?: string;
   metadata: BookMetadata;
   rendition: {
     layout?: 'pre-paginated' | 'reflowable';

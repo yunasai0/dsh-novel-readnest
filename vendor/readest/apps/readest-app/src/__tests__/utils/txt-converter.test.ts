@@ -60,6 +60,23 @@ const getBufferSize = (input?: BufferSource): number => {
 };
 
 describe('TxtToEpubConverter', () => {
+  it.each(['utf-16le', 'utf-16be'])('preserves BOM-marked %s in buffered and streaming conversions', async (encoding) => {
+    const line = 'The lantern was still lit. '.repeat(120);
+    const bytes = Buffer.from('\ufeff第1章 渡口\n' + line + '\n第2章 归航\n引文包含标点：“等我。”', 'utf16le');
+    if (encoding === 'utf-16be') bytes.swap16();
+    const options = { file: new File([new Uint8Array(bytes)], '渡口.txt'), language: 'zh', prefetchText: true };
+    const converter = new TxtToEpubConverter();
+    const streamed = converter as unknown as { convertLargeFile: typeof converter.convert };
+    for (const result of [await converter.convert(options), await streamed.convertLargeFile(options)]) {
+      expect(result.chapterCount).toBe(2);
+      const source = Object.values(result.prefetchedText ?? {}).join('');
+      expect(source).toContain('第1章 渡口');
+      expect(source).toContain(line.trim());
+      expect(source).toContain('引文包含标点：“等我。”');
+      expect(source).not.toMatch(/[\u0000\uFFFD]/);
+    }
+  });
+
   it('convert should choose 8 -> 7 when probe detects multiple chapters', async () => {
     const converter = new TxtToEpubConverter() as unknown as TxtConverterFlowPrivateAPI;
     const calls: number[] = [];

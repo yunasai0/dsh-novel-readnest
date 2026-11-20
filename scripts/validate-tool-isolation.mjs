@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { createRequire, registerHooks } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import * as novelPlugin from '../lib/agent.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const runtime = resolve(process.argv[2] ?? root);
 const runtimeRequire = createRequire(resolve(runtime, 'package.json'));
 const require = createRequire(runtimeRequire.resolve('@deepseek-ai/dsh-tools'));
+const pluginLib = new URL('../lib/', import.meta.url).href;
+const hostPeers = registerHooks({
+  resolve(specifier, context, next) {
+    if (context.parentURL?.startsWith(pluginLib) && specifier.startsWith('@deepseek-ai/')) {
+      return next(pathToFileURL(require.resolve(specifier)).href, context);
+    }
+    return next(specifier, context);
+  },
+});
+const novelPlugin = await import('../lib/agent.mjs');
 const load = name => import(pathToFileURL(require.resolve(name)).href);
 const { Context } = await load('@deepseek-ai/cordis');
 const Prompt = await load('@deepseek-ai/dsh-system-prompt');
@@ -37,7 +46,6 @@ try {
   registerForeign('foreign_search'); registerForeign('foreign_terminal');
   const presetKey = {};
   const preset = createScope(toolOwner, presetKey); scopes.push(preset);
-  if (Native) await preset.ctx.plugin(Native).await(); else preset.ctx.tools.presentAs('native');
   await preset.ctx.plugin(novelPlugin).await();
   const createAgent = async (id, parent, source = 'new') => {
     const agent = { session: { id, seq: 0, eventAt: () => undefined } };
@@ -63,8 +71,8 @@ try {
   assert(names(normal).includes('late_plugin_tool'));
 
   let call = 0;
-  const invoke = (subject, name) => modern
-    ? ctx.tools.execute({ agent: subject, signal: AbortSignal.timeout(2000),
+  const invoke = (subject, name, toolSet) => modern
+    ? ctx.tools.execute({ agent: subject, toolSet, signal: AbortSignal.timeout(2000),
       calls: [{ type: 'tool-call', id: 'call-' + ++call, name, arguments: '{}' }] })
     : ctx.tools.execute({ agent: subject, signal: AbortSignal.timeout(2000),
       callId: 'call-' + ++call, name, arguments: {} });
@@ -74,6 +82,27 @@ try {
   }
   assert.equal(foreignCalls, 0);
   await invoke(agent, 'read_current'); assert.equal(bookCalls, 1);
+  // Extension-private session registrations can shadow preset registrations.
+  // The actual model assembly and dispatch must agree on the provider identity.
+  const scopedFixture = name => agent.ctx.tools.register(Tools.defineTool({
+    name, description: 'UNRELATED_PLUGIN_DESCRIPTION_test', parameters: {},
+    output: { schema: { type: 'json' }, render: () => [] },
+    execute() { foreignCalls++; return {}; },
+  }));
+  const removeExtra = scopedFixture('local_example');
+  const removeCollision = scopedFixture('read_current');
+  const step = modern ? await ctx.tools.resolve({ agent, signal: AbortSignal.timeout(2000),
+    modelSelection: { provider: 'validation', model: 'validation' } }) : undefined;
+  try {
+    const assembly = await ctx.systemPrompt.assemble({ scope: agent, agent, toolSet: step });
+    assert.deepEqual(assembly.tools.map(tool => tool.name).sort(), expected.filter(name => name !== 'read_current'));
+    assert(!JSON.stringify(assembly).includes('UNRELATED_PLUGIN_DESCRIPTION'));
+    await invoke(agent, 'local_example', step); await invoke(agent, 'read_current', step);
+    assert.equal(bookCalls, 1); assert.equal(foreignCalls, 0);
+  } finally {
+    step?.dispose(); removeCollision(); removeExtra();
+  }
+  await verifyCatalog(agent);
   await invoke(normal, 'foreign_search'); assert.equal(foreignCalls, 1);
   const { agent: resumed } = await createAgent('resumed-novel-session', presetKey, 'resume');
   await verifyCatalog(resumed);
@@ -90,4 +119,5 @@ try {
 } finally {
   for (const scope of scopes.reverse()) await scope.dispose();
   await ctx.fiber.dispose();
+  hostPeers.deregister();
 }

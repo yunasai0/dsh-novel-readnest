@@ -56,6 +56,9 @@ export interface ReadingSnapshot {
   reading?: ReadingLocation;
   visibleRanges?: BookRange[];
   visitedRanges?: BookRange[];
+  /** Live selection coordinates for an on-demand read_current call. No text accompanies them. */
+  currentSelectionRanges?: BookRange[];
+  /** Text explicitly attached by the reader and displayed in the composer's quote bar. */
   selection?: { text: string; start?: BookPoint; end: BookPoint; ranges?: BookRange[] };
 }
 

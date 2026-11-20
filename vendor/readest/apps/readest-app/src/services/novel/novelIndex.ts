@@ -6,10 +6,11 @@ export { isChapterId } from '@dsh-reader/protocol';
 import { compareBookPoints, isBookPoint } from '@dsh-reader/reading-progress';
 import { extractBookText, textOffset, type SectionText } from './text';
 import { cleanNovelTitle, isProseHeading, splitMixedHeading } from '@/utils/novelHeadings';
-import { bakeSectionLocations } from '@/services/nav/locations';
+import { bakeLocationsAndCfis, bakeSectionLocations } from '@/services/nav/locations';
 import { chapterNumberOf, volumeNumberOf } from '@dsh-reader/chapter-numbers';
 
 export const NOVEL_INDEX_VERSION = 2;
+class NoExtractableTextError extends Error {}
 
 export interface IndexedChapter extends BookChapter {
   start: BookPoint;
@@ -213,7 +214,7 @@ export async function buildNovelIndex(book: BookDoc, bookHash: string,
   } finally {
     await Promise.allSettled(documents.values());
   }
-  if (!firstText) throw new Error('无法建立小说索引：书籍没有可提取的正文。');
+  if (!firstText) throw new NoExtractableTextError('这本书没有可提取的正文。');
   if (!boundaries.length || compareBookPoints(boundaries[0]!.point, firstText) > 0) {
     boundaries.unshift({ point: firstText, title: '未分章正文', source: 'fallback', issues: ['unsectioned'] });
   }
@@ -278,26 +279,51 @@ export function validNovelIndex(value: unknown, book: BookDoc, hash: string): va
     data.chapters.at(-1)!.end.offset === data.sections.at(-1)!.length;
 }
 
-/** Import persists the index before succeeding; old books are indexed once on open. */
+/** Text indexing and its disk cache are optional additions to a readable EPUB. */
 export async function prepareNovelIndex(fs: Pick<FileSystem, 'readFile' | 'writeFile' | 'createDir'>,
   book: BookDoc, hash: string, onProgress?: (completed: number, total: number) => void) {
   if (book.novelIndex && validNovelIndex(book.novelIndex, book, hash)) return book.novelIndex;
+  delete book.novelIndex;
+  delete book.novelIndexUnavailable;
   const path = `${hash}/novel-index.json`;
   try {
     const stored: unknown = JSON.parse(await fs.readFile(path, 'Books', 'text') as string);
     if (validNovelIndex(stored, book, hash)) return (book.novelIndex = stored);
   } catch { /* Missing or obsolete derived data is rebuilt from the unchanged book. */ }
-  const index = await buildNovelIndex(book, hash, onProgress);
-  await fs.createDir(hash, 'Books', true);
-  await fs.writeFile(path, 'Books', JSON.stringify(index));
+  let index: NovelIndex;
+  try {
+    index = await buildNovelIndex(book, hash, onProgress);
+  } catch (error) {
+    book.novelIndexUnavailable = error instanceof NoExtractableTextError
+      ? error.message : '暂时无法为这本书建立正文索引。';
+    return undefined;
+  }
   book.novelIndex = index;
+  try {
+    await fs.createDir(hash, 'Books', true);
+    await fs.writeFile(path, 'Books', JSON.stringify(index));
+  } catch (error) {
+    console.warn('Unable to cache the novel index', error);
+  }
   return index;
 }
 
 const installed = new WeakSet<BookDoc>();
 export function installNovelNavigation(book: BookDoc) {
   const index = book.novelIndex;
-  if (!index) return;
+  if (!index) {
+    if (book.novelIndexUnavailable) {
+      // Keep publisher links and native resolution; use section sizes without parsing pages again.
+      if (book.toc?.length) {
+        bakeLocationsAndCfis(book.toc, book.sections, (href) => {
+          try { return book.splitTOCHref(href); } catch { return []; }
+        });
+      } else {
+        bakeSectionLocations(book.sections);
+      }
+    }
+    return;
+  }
   // All chapter anchors are already in the index; byte-based locations need no document parsing.
   bakeSectionLocations(book.sections);
   const locationAt = (point: BookPoint) => {

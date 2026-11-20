@@ -29,8 +29,8 @@ interface Reader {
 }
 export type ToolResult = BookResult & { source?: ReadingProvenance };
 const identity = /^[a-zA-Z0-9_-]{8,160}$/;
-const unavailable = () => novelError('READER_DISCONNECTED', '当前书籍的阅读器连接不可用。',
-  '可以先根据已有内容正常交流；需要新的原文时，再回到书页恢复阅读定位后取文。无需新建会话。');
+const unavailable = () => novelError('READER_DISCONNECTED', '当前没有可用的正文定位，无法从这本书取文。',
+  '图片书可能没有可提取的文字；文字书可以回到书页后重试。可以根据用户提供的内容继续讨论。');
 const canceled = () => novelError('READ_CANCELED', '本次读取已取消，未推进同步进度。',
   '需要继续时重新发起当前读取或 sync_reading。', { next_call: syncRecovery });
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -49,7 +49,7 @@ function snapshotOf(value: unknown): ReadingSnapshot | undefined {
   if (!isBookPoint(boundary) || compareBookPoints(boundary, item.end) < 0) return undefined;
   if (item.indexVersion !== undefined && !integer(item.indexVersion)) return undefined;
   if (item.reading && (!validBookRange(item.reading) || compareBookPoints(item.reading.end, boundary) > 0)) return undefined;
-  for (const ranges of [item.visibleRanges, item.visitedRanges, item.reading?.ranges, item.selection?.ranges]) {
+  for (const ranges of [item.visibleRanges, item.visitedRanges, item.reading?.ranges, item.selection?.ranges, item.currentSelectionRanges]) {
     if (ranges !== undefined && (!Array.isArray(ranges) || !ranges.every(validBookRange))) return undefined;
   }
   if (item.selection && (typeof item.selection.text !== 'string' || item.selection.text.length > 1240 ||

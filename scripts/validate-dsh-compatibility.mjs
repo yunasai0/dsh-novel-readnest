@@ -14,7 +14,7 @@ if (!runtime || !archive) {
 
 const requireRuntime = createRequire(join(runtime, 'package.json'));
 const cli = requireRuntime.resolve('@deepseek-ai/dsh/lib/bin.js');
-const { evaluatePluginCompatibility, getDshRuntimeVersion } =
+const { evaluatePluginCompatibility, getDshRuntimeVersion, readPluginMeta } =
   await import(pathToFileURL(requireRuntime.resolve('@deepseek-ai/dsh-app-boot')).href);
 const version = getDshRuntimeVersion();
 const scratchRoot = await realpath(tmpdir());
@@ -30,7 +30,15 @@ try {
   if (install.error) throw install.error;
   assert.equal(install.status, 0, redact((install.stdout ?? '') + (install.stderr ?? '')));
 
-  const manifest = requireRuntime(join(dshHome, 'profiles/web/node_modules/dsh-novel-readnest/package.json'));
+  const profile = join(dshHome, 'profiles/web');
+  const manifest = requireRuntime(join(profile, 'node_modules/dsh-novel-readnest/package.json'));
+  const metadata = readPluginMeta(manifest.name, pathToFileURL(join(profile, 'package.json')).href);
+  assert(metadata && !metadata.error, metadata?.error ?? 'The installed plugin card has no metadata');
+  for (const language of ['en', 'zh']) {
+    assert(metadata.title?.[language]?.trim(), `Missing ${language} card title`);
+    assert(metadata.description?.[language]?.trim(), `Missing ${language} card description`);
+  }
+  assert.match(metadata.icon ?? '', /^data:image\/(?:webp|png|jpeg|svg\+xml);base64,/);
   const { engines, ...peerManifest } = manifest;
   // Later numbers here exercise range semantics. They need not be published DSH versions.
   const allowed = ['0.2.1-rc.2', '0.2.1-rc.5', '0.2.1', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3',

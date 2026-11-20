@@ -8,10 +8,6 @@
         name: 小说陪读
         description: 仅使用当前书籍的阅读工具讨论小说
         plugins:
-          - id: novel-native-tools
-            name: '@deepseek-ai/dsh-agent-tool-presentation'
-            config:
-              mode: native
           - id: novel-reader-tool
             name: dsh-novel-readnest/agent
           - id: companion-compaction

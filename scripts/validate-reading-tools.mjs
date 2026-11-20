@@ -21,7 +21,7 @@ host({ agents: { get: (id) => id === session.id ? { session } : undefined },
   connection: { admit: () => ({ peer: {} }) }, effect(fn) { cleanup = fn(); },
   provide(name, value) { if (name === 'novelReader') bridge = value; return () => {}; },
   webServer: { register(route) { routes.push(route); return () => {}; } } });
-agentPlugin({ novelReader: bridge, tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, guard: () => () => {} }, effect() {},
+agentPlugin({ novelReader: bridge, tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, get: name => tools.get(name), presentAs() {}, guard: () => () => {} }, effect() {},
   systemPrompt: { section: () => () => {}, suppressRuntimeContext: () => () => {}, context(spec) { contextText = spec.text; return () => {}; } },
   on(event, fn) { listeners.set(event, fn); return () => {}; } });
 const server = createServer(async (req, res) => {

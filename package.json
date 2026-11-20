@@ -1,6 +1,6 @@
 {
   "name": "dsh-novel-readnest",
-  "version": "0.2.0-beta.15",
+  "version": "0.2.0-beta.16",
   "description": "DSH Novel ReadNest：基于 Readest 的本地小说阅读与书内 Agent 会话",
   "license": "AGPL-3.0-or-later",
   "author": "yunasai0",
@@ -12,7 +12,8 @@
   "bugs": {
     "url": "https://github.com/yunasai0/dsh-novel-readnest/issues"
   },
-  "keywords": ["dsh", "readest", "ebook", "epub", "novel", "agent"],
+  "keywords": ["dsh", "readest", "ebook", "epub", "txt", "novel", "agent", "reading companion", "小说", "阅读器", "陪读"],
+  "icon": "./reader/study/book.webp",
   "type": "module",
   "packageManager": "pnpm@11.1.1",
   "engines": {
@@ -20,6 +21,8 @@
     "node": ">=24"
   },
   "exports": {
+    "./icon": "./reader/study/book.webp",
+    "./locale/*.json": "./locale/*.json",
     ".": "./lib/host.mjs",
     "./agent": "./lib/agent.mjs",
     "./pruner": "./lib/pruner.mjs",
@@ -43,7 +46,7 @@
       ]
     }
   },
-  "files": ["lib", "reader", "cordis.patch.yml", "LICENSE", "NOTICE.md", "CHANGELOG.md"],
+  "files": ["lib", "reader", "locale", "assets/screenshots", "cordis.patch.yml", "LICENSE", "NOTICE.md", "CONTRIBUTING.md", "CHANGELOG.md"],
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "tsc --noEmit",

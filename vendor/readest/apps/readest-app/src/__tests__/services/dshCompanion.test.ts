@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BookDoc } from '@/libs/document';
 import type { FoliateView } from '@/types/view';
 import { buildNovelIndex } from '@/services/novel/novelIndex';
-import { connectDshBook } from '@/services/dshCompanion';
+import { connectDshBook, discussDshSelection } from '@/services/dshCompanion';
+import type { Book } from '@/types/book';
 import { companionChannel, type ReadingSnapshot } from '@dsh-reader/protocol';
 import { readFurthestPoint } from '@dsh-reader/reading-progress';
 
@@ -45,6 +46,22 @@ async function reader(hash = 'book-test-001', delayed?: { section: number; ready
   connections.push(connection);
   return {
     close: () => connection.dispose(),
+    select(section: number, start: number, end: number) {
+      const owner = documents[section]!;
+      const range = owner.createRange();
+      const node = owner.querySelector('p')!.firstChild!;
+      range.setStart(node, start); range.setEnd(node, end);
+      const getSelection = vi.spyOn(owner, 'getSelection').mockReturnValue({
+        rangeCount: 1, isCollapsed: false, getRangeAt: () => range,
+      } as unknown as Selection);
+      owner.dispatchEvent(new Event('selectionchange'));
+      return {
+        attach: () => discussDshSelection({ hash, title: '测试小说' } as Book, view, {
+          key: 'quote', text: range.toString(), page: 1, range, index: section,
+        }),
+        remove: () => { getSelection.mockReturnValue(null); owner.dispatchEvent(new Event('selectionchange')); },
+      };
+    },
     turn(section: number, end: number) {
       visible = [];
       const range = documents[section]!.createRange();
@@ -75,6 +92,38 @@ async function reader(hash = 'book-test-001', delayed?: { section: number; ready
 }
 
 describe('furthest reading position is independent of the discussion page', () => {
+  it('keeps only coordinates for a live selection, and sends text only after explicitly attaching it', async () => {
+    const book = await reader();
+    book.turn(0, 10);
+    const selection = book.select(0, 1, 4);
+    const plain = await book.snapshot();
+    expect(plain.selection).toBeUndefined();
+    expect(plain.currentSelectionRanges).toEqual([{ start: { section: 0, offset: 1 }, end: { section: 0, offset: 4 } }]);
+    expect(JSON.stringify(plain)).not.toContain('bcd');
+    expect(await selection.attach()).toBe(true);
+    const attached = messages.findLast(message => message['type'] === 'open-selection')!['snapshot'] as ReadingSnapshot;
+    expect(attached.selection?.text).toBe('bcd');
+    selection.remove();
+    const without = await book.snapshot();
+    expect(without.currentSelectionRanges).toBeUndefined();
+    expect(without.selection).toBeUndefined();
+    expect((await book.snapshot(attached)).selection?.text).toBe('bcd');
+  });
+
+  it('does not attach a pending quote after the reader has switched books', async () => {
+    let finish!: () => void;
+    const ready = new Promise<void>((resolve) => { finish = resolve; });
+    const oldBook = await reader('old-book', { section: 0, ready });
+    oldBook.turn(0, 10);
+    const attaching = oldBook.select(0, 1, 4).attach();
+    oldBook.close();
+    const nextBook = await reader('next-book');
+    nextBook.turn(0, 7);
+    finish();
+    expect(await attaching).toBe(false);
+    expect(messages.some(message => message['type'] === 'open-selection')).toBe(false);
+    expect((await nextBook.snapshot()).selection).toBeUndefined();
+  });
   it('captures all visible files in a spread and keeps an old quote separate from the live reading position', async () => {
     const book = await reader();
     book.turn(0, 3);

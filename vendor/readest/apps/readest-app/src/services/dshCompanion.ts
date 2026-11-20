@@ -29,8 +29,10 @@ export function openDshCompanion(book: Book) { send({ type: 'open', book: descri
 
 const selectionSnapshots = new WeakMap<FoliateView, (selection: TextSelection) => Promise<ReadingSnapshot | undefined>>();
 export async function discussDshSelection(book: Book, view: FoliateView, selection: TextSelection) {
-  const snapshot = await selectionSnapshots.get(view)?.(selection).catch(() => undefined);
-  if (!snapshot?.selection) return false;
+  const capture = selectionSnapshots.get(view);
+  if (!capture) return false;
+  const snapshot = await capture(selection).catch(() => undefined);
+  if (!snapshot?.selection || selectionSnapshots.get(view) !== capture) return false;
   send({ type: 'open-selection', book: describeBook(book), snapshot });
   return true;
 }
@@ -48,23 +50,6 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
   let version = doc.novelIndex?.version ?? 0;
   let visited = readVisitedRanges(book.hash, version);
   const pendingReadings = new Set<Promise<Recorded | undefined>>();
-  const selections = new Map<Document, Range>();
-  const listeners = new Map<Document, () => void>();
-
-  function watchSelection(owners: Set<Document>) {
-    for (const [owner, listener] of listeners) {
-      if (!owners.has(owner)) { owner.removeEventListener('selectionchange', listener); listeners.delete(owner); selections.delete(owner); }
-    }
-    for (const owner of owners) {
-      if (listeners.has(owner)) continue;
-      const listener = () => {
-        const selection = owner.getSelection();
-        if (selection?.rangeCount && !selection.isCollapsed) selections.set(owner, selection.getRangeAt(0).cloneRange());
-        else if (owner.hasFocus()) selections.delete(owner);
-      };
-      owner.addEventListener('selectionchange', listener); listeners.set(owner, listener);
-    }
-  }
 
   async function mapRange(raw: RawRange): Promise<BookRange | undefined> {
     const view = getView();
@@ -147,7 +132,6 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
       range: item.range.cloneRange(), cfi: view!.getCFI(item.index, item.range) }))
       : [{ index, cfi, range: range.cloneRange() }];
     position = raw;
-    watchSelection(new Set(raw.flatMap((item) => item.range.startContainer.ownerDocument ? [item.range.startContainer.ownerDocument] : [])));
     if (view && view !== registeredView) {
       if (registeredView) selectionSnapshots.delete(registeredView);
       registeredView = view; selectionSnapshots.set(view, snapshot);
@@ -169,11 +153,11 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
   function selectedRanges(explicit?: TextSelection): RawRange[] {
     const view = getView();
     if (!view) return [];
+    const owners = new Set(position.map((item) => item.range.startContainer.ownerDocument));
     const ranges = explicit ? explicit.segments?.map((segment) => segment.range) ?? [explicit.range] :
-      [...listeners.keys()].flatMap((owner) => {
-        const selected = owner.getSelection();
-        const range = selected?.rangeCount && !selected.isCollapsed ? selected.getRangeAt(0) : selections.get(owner);
-        return range ? [range] : [];
+      [...owners].flatMap((owner) => {
+        const selected = owner?.getSelection();
+        return selected?.rangeCount && !selected.isCollapsed ? [selected.getRangeAt(0)] : [];
       });
     const contents = view.renderer?.getContents?.() ?? [];
     return ranges.flatMap((range) => {
@@ -183,6 +167,24 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
       if (index === undefined) return [];
       return [{ index, range: range.cloneRange(), cfi: view.getCFI?.(index, range) ?? position.find((item) => item.index === index)?.cfi ?? '' }];
     });
+  }
+
+  async function quotedSelection(ranges: BookRange[]): Promise<ReadingSnapshot['selection']> {
+    let preview = '';
+    for (const range of ranges) {
+      for (let section = range.start.section; section <= range.end.section && preview.length <= 1200; section++) {
+        const source = await text.load(section);
+        if (!source) return undefined;
+        const from = section === range.start.section ? range.start.offset : 0;
+        const to = section === range.end.section ? range.end.offset : source.body.text.length;
+        preview += source.body.text.slice(from, Math.min(to, from + 1201 - preview.length));
+      }
+    }
+    if (!ranges.length || !preview.trim()) return undefined;
+    let end = Math.min(1200, preview.length);
+    if (end < preview.length && /[\uDC00-\uDFFF]/.test(preview[end]!)) end--;
+    return { start: ranges[0]!.start, end: ranges.at(-1)!.end, ranges,
+      text: preview.slice(0, end) + (end < preview.length ? '…（选区已截断）' : '') };
   }
 
   async function snapshot(explicit?: TextSelection, quote?: ReadingSnapshot): Promise<ReadingSnapshot | undefined> {
@@ -200,32 +202,17 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
     const records = (await pending).filter((value): value is Recorded => !!value);
     const spoilerBoundary = furthestPoint(savedBoundary, current.end, ...records.map((value) => value.location.end))!;
     let selection = quote?.selection;
-    if (!quote) {
-      const mapped = await mappedSelection;
-      if (mapped.length && mapped.every(Boolean)) {
-        const ranges = clipBookRanges(mapped as BookRange[], { section: 0, offset: 0 }, spoilerBoundary);
-        let preview = '';
-        for (const range of ranges) {
-          for (let section = range.start.section; section <= range.end.section && preview.length <= 1200; section++) {
-            const source = await text.load(section);
-            if (!source) return undefined;
-            const from = section === range.start.section ? range.start.offset : 0;
-            const to = section === range.end.section ? range.end.offset : source.body.text.length;
-            preview += source.body.text.slice(from, Math.min(to, from + 1201 - preview.length));
-          }
-        }
-        if (ranges.length && preview.trim()) {
-          const clipped = preview.length > 1200;
-          let end = Math.min(1200, preview.length);
-          if (end < preview.length && /[\uDC00-\uDFFF]/.test(preview[end]!)) end--;
-          selection = { start: ranges[0]!.start, end: ranges.at(-1)!.end, ranges,
-            text: preview.slice(0, end) + (clipped ? '…（选区已截断）' : '') };
-        }
-      }
+    let currentSelectionRanges: BookRange[] | undefined;
+    const mapped = await mappedSelection;
+    if (mapped.length && mapped.every(Boolean)) {
+      const ranges = clipBookRanges(mapped as BookRange[], { section: 0, offset: 0 }, spoilerBoundary);
+      if (explicit) selection = await quotedSelection(ranges);
+      else if (ranges.length) currentSelectionRanges = ranges;
     }
     return { ...(quote ?? current), title: book.title.slice(0, 240), reading: current,
       visibleRanges: quote?.visibleRanges ?? current.ranges, indexVersion: index.version, spoilerBoundary,
       visitedRanges: mergeBookRanges([...savedVisits, ...records.flatMap((value) => value.visited), ...current.ranges!]),
+      ...(currentSelectionRanges ? { currentSelectionRanges } : {}),
       ...(selection ? { selection } : {}) };
   }
 
@@ -247,7 +234,6 @@ export function connectDshBook(book: Pick<Book, 'hash' | 'title'>, doc: BookDoc,
   return { record, dispose() {
     disposed = true;
     if (registeredView && selectionSnapshots.get(registeredView) === snapshot) selectionSnapshots.delete(registeredView);
-    listeners.forEach((listener, owner) => owner.removeEventListener('selectionchange', listener));
     window.removeEventListener('message', onMessage);
     send({ type: 'closed', book: book.hash });
   } };

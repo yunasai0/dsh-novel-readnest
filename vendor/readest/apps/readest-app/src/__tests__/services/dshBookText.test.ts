@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import type { BookDoc } from '@/libs/document';
 import { createBookText } from '@/services/dshBookText';
 import { buildNovelIndex, installNovelNavigation, prepareNovelIndex, validNovelIndex } from '@/services/novel/novelIndex';
@@ -27,6 +27,47 @@ function request(query: BookQuery, cutoff?: BookPoint, resume?: BookPoint, limit
 }
 
 describe('canonical novel chapter index', () => {
+  it('keeps an image-only EPUB readable with its original navigation and no fabricated text', async () => {
+    const toc = [item('画页', 'plate.xhtml')];
+    const book = documentBook({ 'plate.xhtml': '<img src="painting.png"/>' }, toc);
+    const readSection = vi.spyOn(book.sections[0]!, 'createDocument');
+    const fs = { readFile: async () => '', writeFile: vi.fn(), createDir: vi.fn() };
+    expect(await prepareNovelIndex(fs as Parameters<typeof prepareNovelIndex>[0], book, 'plate')).toBeUndefined();
+    installNovelNavigation(book);
+    expect(book.toc).toBe(toc);
+    expect(fs.writeFile).not.toHaveBeenCalled();
+    const result = await createBookText(book, 'plate').answer(request({ kind: 'near', before: 3, after: 2 }));
+    expect(result.error?.code).toBe('TEXT_INDEX_UNAVAILABLE');
+    expect(result.message).toContain('没有可提取的正文');
+    expect(result.chapters).toBeUndefined();
+    expect(readSection).toHaveBeenCalledTimes(1);
+    expect((await book.sections[0]!.createDocument()).querySelector('img')?.getAttribute('src')).toBe('painting.png');
+  });
+
+  it('retains an index built in memory when its derived cache cannot be persisted', async () => {
+    const book = documentBook({ 'one.xhtml': '<p>还能阅读的文字</p>' });
+    const fs = { readFile: async () => '', createDir: vi.fn(), writeFile: async () => { throw new Error('cache failed'); } };
+    const index = await prepareNovelIndex(fs as Parameters<typeof prepareNovelIndex>[0], book, 'uncached');
+    assert.isDefined(index);
+    expect(book.novelIndex).toBe(index);
+    const result = await createBookText(book, 'uncached').answer(request({ kind: 'chapter', chapter_id: index.chapters[0]!.chapter_id }));
+    expect(result.chapters?.[0]?.text).toBe('还能阅读的文字');
+  });
+
+  it('leaves good publisher links and the spine available beside a malformed link', async () => {
+    const toc = [item('坏链接', 'broken%'), item('可读页', 'two.xhtml')];
+    const book = documentBook({ 'one.xhtml': '<p>第一页</p>', 'two.xhtml': '<p>第二页</p>' }, toc);
+    book.splitTOCHref = href => {
+      if (href === 'broken%') throw new URIError('Malformed href');
+      return href.split('#');
+    };
+    const fs = { readFile: async () => '', createDir: vi.fn(), writeFile: vi.fn() };
+    expect(await prepareNovelIndex(fs as Parameters<typeof prepareNovelIndex>[0], book, 'bad-link')).toBeUndefined();
+    installNovelNavigation(book);
+    expect(book.toc?.map(entry => entry.href)).toEqual(['broken%', 'two.xhtml']);
+    expect((await book.sections[1]!.createDocument()).body.textContent).toBe('第二页');
+  });
+
   it('keeps current reading near the anchor even inside a huge paragraph', async () => {
     const { text } = await reader({ 'a.xhtml': '<p>' + '甲'.repeat(50000) + '当前位置' + '乙'.repeat(10000) + '</p>' });
     const input = request({ kind: 'near', before: 3, after: 2 }, undefined, undefined, 30000);
@@ -36,6 +77,17 @@ describe('canonical novel chapter index', () => {
     expect(body).toContain('当前位置');
     expect(result.chapters?.[0]?.range?.start.offset).toBeGreaterThanOrEqual(49000);
     expect([...body].length).toBeLessThanOrEqual(1600);
+  });
+
+  it('uses a live selection as the anchor only when the tool requests nearby text', async () => {
+    const { text } = await reader({ 'a.xhtml': '<p>页首' + '甲'.repeat(2000) + '选中片段' + '乙'.repeat(1500) + '</p>' });
+    const input = request({ kind: 'near', before: 3, after: 2 });
+    input.snapshot.currentSelectionRanges = [{ start: point(0, 2002), end: point(0, 2006) }];
+    const selected = (await text.answer(input)).chapters?.[0]?.text;
+    expect(selected).toContain('选中片段');
+    expect(selected).not.toContain('页首');
+    delete input.snapshot.currentSelectionRanges;
+    expect((await text.answer(input)).chapters?.[0]?.text).toContain('页首');
   });
   it('reads original chapter numbers, disambiguates volumes, and never falls back to file order', async () => {
     const { text, index } = await reader({
@@ -219,6 +271,7 @@ describe('canonical novel chapter index', () => {
       writeFile: async (path: string, _base: unknown, data: unknown) => { store.set(path, String(data)); }, createDir: async () => {} };
     const first = documentBook(docs);
     const index = await prepareNovelIndex(fs as Parameters<typeof prepareNovelIndex>[0], first, 'persistent-book');
+    assert.isDefined(index);
     const second = documentBook(docs);
     second.sections.forEach((section) => { section.createDocument = async () => { throw new Error('should use cache'); }; });
     expect(await prepareNovelIndex(fs as Parameters<typeof prepareNovelIndex>[0], second, 'persistent-book')).toEqual(JSON.parse(JSON.stringify(index)));

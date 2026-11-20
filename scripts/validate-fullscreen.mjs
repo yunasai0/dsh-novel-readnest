@@ -67,7 +67,8 @@ try {
   await expect(panel).toHaveAttribute('data-dsh-reader-fullscreen', '');
 
   if (process.env.FULLSCREEN_COMPARE_BETA12 === '1') {
-    const previous = execFileSync('git', ['show', 'v0.2.0-beta.12:src/companion-style.ts'], { cwd: root, encoding: 'utf8' });
+    // Keep the beta.12 comparison usable after its public tag is retired.
+    const previous = execFileSync('git', ['show', '505a4bb81de16545bcbd040ef22203f244dfeb00:src/companion-style.ts'], { cwd: root, encoding: 'utf8' });
     const oldStyle = previous.slice(previous.indexOf('`') + 1, previous.lastIndexOf('`'));
     const currentStyle = await panel.locator('style').textContent();
     await panel.locator('style').evaluate((element, css) => { element.textContent = css; }, oldStyle);

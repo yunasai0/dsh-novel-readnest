@@ -328,7 +328,7 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
       config.booknotes = config.booknotes?.filter((booknote) => booknote.cfi) ?? [];
       // Load cached book navigation (TOC + section fragments) or compute and persist.
       // Feed manifests grow between opens, so feed books always recompute instead.
-      if (bookDoc.novelIndex) {
+      if (bookDoc.novelIndex || bookDoc.novelIndexUnavailable) {
         const { installNovelNavigation } = await import('@/services/novel/novelIndex');
         installNovelNavigation(bookDoc);
       } else if (book.format === 'EPUB' && bookDoc.rendition?.layout !== 'pre-paginated') {

@@ -187,7 +187,7 @@ function NativeSession({
     };
     const updateProtection = () => post('protection', { protectedReading: protection.current });
     const capture = () => {
-      const quote = pendingQuote.current;
+      const quote = pendingQuote.current === visibleQuote.current ? pendingQuote.current : undefined;
       pendingQuote.current = undefined;
       return {
         protectedReading: protection.current,
@@ -212,15 +212,23 @@ function NativeSession({
       const prompt: SessionFace['prompt'] = async function (this: SessionFace, content, mode, caller, requestId) {
         const abort = caller ? AbortSignal.any([signal, caller]) : signal;
         const id = requestId ?? crypto.randomUUID();
-        const captured = content.length ? captures.get(id) ?? capture() : last;
+        const pending = captures.get(id);
+        let captured = last;
+        if (content.length) {
+          captured = pending && pending.quote === visibleQuote.current ? pending : capture();
+        }
         captures.delete(id);
         let prepared = false;
         let accepted = false;
         try {
           // Reading context is optional enrichment, not a gate on native chat.
           try {
-            const snapshot = await captured?.snapshot;
-            if (snapshot && captured) {
+            const resultSnapshot = await captured?.snapshot;
+            if (resultSnapshot && captured) {
+              // Only the quoted excerpt the user attached can enter runtime context,
+              // including when receiving a snapshot from an older reader frame.
+              const { selection: _readerSelection, ...position } = resultSnapshot;
+              const snapshot = captured.quote?.selection ? { ...position, selection: captured.quote.selection } : position;
               const preparationSignal = AbortSignal.any([abort, AbortSignal.timeout(2500)]);
               await post('hello', { protectedReading: protection.current, indexVersion: snapshot.indexVersion }, preparationSignal);
               const persona = captured.persona;

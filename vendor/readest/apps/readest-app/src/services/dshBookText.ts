@@ -10,8 +10,11 @@ export { comparable, extractBookText, paragraphAt, textOffset } from './novel/te
 
 export function createBookText(book: BookDoc, bookHash: string) {
   const sections = new Map<number, Promise<{ doc: Document; body: SectionText } | undefined>>();
-  const index = book.novelIndex ? Promise.resolve(book.novelIndex) : buildNovelIndex(book, bookHash)
-    .then((value) => (book.novelIndex = value));
+  const index = (async () => {
+    if (book.novelIndex) return book.novelIndex;
+    if (book.novelIndexUnavailable) throw new Error(book.novelIndexUnavailable);
+    return (book.novelIndex = await buildNovelIndex(book, bookHash));
+  })();
   void index.catch(() => {});
   function load(section: number) {
     const cached = sections.get(section);
@@ -94,6 +97,8 @@ export function createBookText(book: BookDoc, bookHash: string) {
   }
 
   async function answer(request: BookRequest): Promise<ReaderResult> {
+    if (book.novelIndexUnavailable) return novelError('TEXT_INDEX_UNAVAILABLE', book.novelIndexUnavailable,
+      '可以继续翻阅原书，或根据用户提供的内容讨论。');
     const data = await index;
     const { chapters } = data;
     const { query, snapshot, protectedReading, resume } = request;
@@ -135,7 +140,7 @@ export function createBookText(book: BookDoc, bookHash: string) {
     if (query.kind === 'near') {
       ranges = mergeBookRanges(snapshot.selection?.ranges ??
         (snapshot.selection?.start ? [{ start: snapshot.selection.start, end: snapshot.selection.end }] :
-          snapshot.visibleRanges ?? [{ start: snapshot.start, end: snapshot.end }]));
+          snapshot.currentSelectionRanges ?? snapshot.visibleRanges ?? [{ start: snapshot.start, end: snapshot.end }]));
       if (!ranges.length) return novelError('POSITION_UNAVAILABLE', '当前讨论片段没有可靠的正文定位。',
         '请回到当前书页，重新选择原文或发送消息。');
       const anchorStart = { ...ranges[0]!.start }, anchorEnd = { ...ranges.at(-1)!.end };

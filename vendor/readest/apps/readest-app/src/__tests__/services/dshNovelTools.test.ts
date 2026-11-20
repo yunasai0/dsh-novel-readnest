@@ -13,7 +13,7 @@ beforeEach(() => {
   tools.clear(); query.mockReset().mockResolvedValue({ status: 'ok', chapters: [] });
   const noop = () => () => {};
   apply({ novelReader: { query, book: () => 'book-test' } as unknown as BookBridge,
-    tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, guard: noop }, effect: noop,
+    tools: { register(tool) { tools.set(tool.name, tool); return () => {}; }, get: name => tools.get(name), presentAs: noop, guard: noop }, effect: noop,
     systemPrompt: { section: noop, context: noop, suppressRuntimeContext: noop }, on: noop,
   });
 });
@@ -26,7 +26,7 @@ describe('single-purpose novel tools', () => {
     let runtimeContext: ((input: unknown) => string) | undefined;
     const noop = () => () => {};
     apply({ novelReader: { admit, finish, active: () => undefined, book: () => 'book-test' } as unknown as BookBridge,
-      tools: { register: noop, guard: noop }, effect: noop,
+      tools: { register: noop, guard: noop, get: () => undefined, presentAs: noop }, effect: noop,
       systemPrompt: { section: noop, suppressRuntimeContext: noop, context(spec) { runtimeContext = spec.text as typeof runtimeContext; return noop(); } },
       on(event, handler) { handlers.set(event, handler); return noop(); },
     });

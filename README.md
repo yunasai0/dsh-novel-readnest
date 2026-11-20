@@ -39,7 +39,7 @@
 
 窄屏下使用单栏正文，目录、配色、阅读进度、字体和朗读控件集中在底部。
 
-<img src="assets/screenshots/04-narrow-reader.png" alt="窄屏单栏阅读和底部工具栏" width="360">
+![窄屏单栏阅读和底部工具栏](assets/screenshots/04-narrow-reader.png)
 
 ## 安装
 
@@ -48,7 +48,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.15"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.16"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -64,16 +64,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.15/dsh-novel-readnest-0.2.0-beta.15.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.16/dsh-novel-readnest-0.2.0-beta.16.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-本次版本为 `v0.2.0-beta.15`。已安装用户可在插件管理中使用本版 Release 安装包更新；DSH Web 可重新执行上面的安装命令，指向新版本标签。更新后重启对应的 DSH 服务或桌面应用，再刷新阅读页面。
+当前版本为 `v0.2.0-beta.16`。已安装用户可在插件管理中使用本版 Release 安装包更新。DSH Web 可执行上面的安装命令。更新后重启 DSH，再刷新阅读页面。
 
-固定到旧标签或旧 Release 安装包的安装不会因仓库推送自动切换版本。无需删除书库或会话数据；更新后确认插件版本显示为 `0.2.0-beta.15`。
+更新后可在插件管理中确认版本为 `0.2.0-beta.16`。需要回滚时，使用 [beta.15 安装包与校验文件](https://github.com/yunasai0/dsh-novel-readnest/releases/tag/v0.2.0-beta.15)。
 
 ### 手机和平板
 
@@ -98,7 +98,7 @@ https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.15/
 
 书籍、统一章节索引、阅读进度、每本书的最远阅读位置、笔记和人设设置保存在当前浏览器或桌面窗口的站点存储中。AI 会话保存在 DSH 数据目录。
 
-新书在导入完成前建立索引，旧书在首次打开时补建。索引保留原文顺序，不根据章号重排或删除重复正文，也不改变原有阅读定位和笔记。TXT 自动分块只是内部存储结构；新导入的无标题长正文不会把这些块显示成虚构章节。
+可提取正文的新书在导入时建立索引，旧书在首次打开时补建。遇到纯图片 EPUB 或索引建立失败时，阅读器沿用原书目录，仍可翻页。索引保留原文顺序，不根据章号重排或删除重复正文，也不改变原有阅读定位和笔记。TXT 自动分块只是内部存储结构；新导入的无标题长正文不会把这些块显示成虚构章节。
 
 长篇导入会显示「整理正文 → 建立目录 → 保存书籍」的实际阶段和进度。支持的浏览器会在后台线程整理 TXT；首次打开直接使用已完成的统一索引，避免再次建立另一份目录。
 
@@ -117,7 +117,7 @@ read_chapter_ids({"chapter_ids":["目录返回的ID"]}) → 读取明确选中�
 continue_reading({"cursor":"返回的next_cursor"}) → 继续原任务
 ```
 
-正文由 Agent 按需获取，不会在每次发消息时自动附上当前页或累计已读正文；用户主动引用的选区仍随消息提供。首次增量同步只取当前片段，之后补齐实际浏览过的区间，跳读不会自动加载中间章节。同步进度仅在正文成功交付且本轮正常完成后确认，取消或失败后可以重试。
+正文由 Agent 按需获取。普通划词仅为“读取当前片段”提供定位，输入区明确附上的引用才会自动随消息发送。首次增量同步只取当前片段，之后补齐实际浏览过的区间，跳读不会自动加载中间章节。同步进度仅在正文成功交付且本轮正常完成后确认，取消或失败后可以重试。
 
 当前片段优先保持段落完整，通常约 2,000 字，不另设固定字数上限。所有正文查询累计使用同一轮的 30,000 字符额度；达到额度后按 `next_call.when` 在下一轮续读。游标固定原任务的起点、终点与权限，后续翻页不会扩大原任务；碰到防剧透边界时停止，不提供越界续读。结果包含停止原因、定位和恢复提示。
 

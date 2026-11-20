@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReaderPanel, type SessionServices } from '@dsh-reader/companion-panel';
@@ -73,10 +73,32 @@ async function openConversation(quote?: string) {
     });
     return result;
   }
-  return { send, submit, reference };
+  return { send, submit, reference, face };
 }
 
 describe('conversation remains available without reading admission', () => {
+  it('sends only the quote visible at submission and discards a stale implicit quote from an older frame', async () => {
+    readerSnapshot = { ...snapshot, selection: { start: snapshot.start, end: snapshot.end, text: '上次划词的原文' } };
+    const { submit } = await openConversation('这一段被明确引用');
+    await submit();
+    const prepared = () => operations.filter(item => item['op'] === 'prepare').at(-1)?.['snapshot'] as ReadingSnapshot;
+    expect(prepared().selection?.text).toBe('这一段被明确引用');
+    expect(screen.queryByRole('button', { name: '清除选区' })).toBeNull();
+    await submit();
+    expect(prepared().selection).toBeUndefined();
+    expect(JSON.stringify(prepared())).not.toContain('上次划词的原文');
+  });
+
+  it('honors removal while a native submission is pending, even when disconnected', async () => {
+    disconnected = true;
+    const { face, send } = await openConversation('不应该发送的引用');
+    const { requestId } = face.beginSubmission();
+    fireEvent.click(screen.getByRole('button', { name: '清除选区' }));
+    await act(async () => {
+      await face.prompt([{ type: 'text', text: '只发送我的问题' }], 'queue', undefined, requestId);
+    });
+    expect(send.mock.calls[0]?.[0]).toEqual([{ type: 'text', text: '只发送我的问题' }]);
+  });
   it('sends normally when the current reading snapshot is missing', async () => {
     readerSnapshot = undefined;
     const { send, submit } = await openConversation();

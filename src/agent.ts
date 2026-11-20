@@ -5,6 +5,8 @@ import { assembleNovelPrompt } from './persona.js';
 import { companionPreset, isChapterId, novelToolNames, type BookResult, type BookToolQuery, type NovelToolName } from './protocol.js';
 import { novelError, directoryRecovery } from './novel-errors.js';
 import { spoilerBoundaryOf } from './reading-progress.js';
+import { installReadingToolPolicy, type ReadingToolPolicyContext } from './reading-tool-policy.js';
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 
 export const name = 'novel-reader-agent';
 export const inject = ['novelReader', 'tools', 'systemPrompt'];
@@ -14,9 +16,8 @@ type UserMessage = { source?: { kind?: string; rpcId?: string } };
 type Step = { kind: 'reject' } | { kind: 'enter'; messages: UserMessage[] };
 interface AgentContext {
   novelReader: BookBridge;
-  tools: {
+  tools: ReadingToolPolicyContext['tools'] & {
     register(definition: ReturnType<typeof defineTool>): () => void;
-    guard(check: (execution: { name: string }) => string | undefined): () => void;
   };
   effect(activate: () => () => void): void;
   systemPrompt: {
@@ -30,6 +31,7 @@ interface AgentContext {
   on(event: 'session/event', listener: (session: NovelSession, event: { type: string; data: { turn?: number } }) => void): () => void;
   on(event: 'agent/created' | 'agent/disposed', listener: (input: { agent: Agent }) => void): () => void;
   on(event: 'agent-preset/selected', listener: (sessionId: string, preset: string) => void): () => void;
+  on(...args: Parameters<ReadingToolPolicyContext['on']>): () => void;
 }
 
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -49,7 +51,7 @@ function modelResult(result: BookResult & { source?: unknown }) {
 
 export function apply(ctx: AgentContext) {
   const bridge = ctx.novelReader;
-  const allowed = new Set<string>(novelToolNames);
+  const owned = new Set<ToolDefinition>();
   const restrictions = new Map<Agent, () => void>();
   const isolate = (agent: Agent) => {
     if (!restrictions.has(agent)) restrictions.set(agent, agent.ctx.tools.restrict({ allow: [...novelToolNames] }));
@@ -64,8 +66,6 @@ export function apply(ctx: AgentContext) {
     }
   });
   ctx.effect(() => () => { for (const agent of restrictions.keys()) release(agent); });
-  // Also reject guessed/stale names at execution time, not just in the catalog.
-  ctx.tools.guard(({ name }) => allowed.has(name) ? undefined : '小说陪读只提供当前书籍的阅读工具。');
   ctx.systemPrompt.suppressRuntimeContext();
   ctx.systemPrompt.section({
     name: 'novel-reader-persona',
@@ -163,7 +163,7 @@ export function apply(ctx: AgentContext) {
       },
     });
     const execute = tool.execute;
-    ctx.tools.register({ ...tool, async execute(args, exec) {
+    const definition: typeof tool = { ...tool, async execute(args, exec) {
       try { return await execute(args, exec); }
       catch (error) {
         if (error instanceof ToolArgsError) return failure(args, error.violations);
@@ -173,7 +173,9 @@ export function apply(ctx: AgentContext) {
         return modelResult(novelError('INTERNAL_TOOL_ERROR', '工具执行遇到内部异常，错误编号：' + reference,
           '请重新打开本书后重试；如仍失败，请提供错误编号。不要通过猜测参数重试。'));
       }
-    } });
+    } };
+    ctx.tools.register(definition);
+    owned.add(definition);
   };
   register('read_current', '读取当前讨论片段：有选区时围绕选区，否则读取当前可见正文，补前约3段、后约2段。无需传位置；遵守已读边界和本轮共享30000字额度。', {},
     (args) => keysOnly(args, []) ? { kind: 'near', before: 3, after: 2 } : undefined,
@@ -213,4 +215,5 @@ export function apply(ctx: AgentContext) {
   }, (args) => keysOnly(args, ['cursor']) && typeof args['cursor'] === 'string' && !!args['cursor'].trim() && args['cursor'].length <= 160
     ? { cursor: args['cursor'] } : undefined,
     '只传一个非空 cursor 字符串，原样复制上次返回值。没有游标时重新调用原来的读取工具，不要自行拼接。');
+  return installReadingToolPolicy(ctx, owned);
 }

@@ -119,6 +119,13 @@ const HEADER_TEXT_MAX_BYTES = 128 * 1024;
 const ENCODING_HEAD_SAMPLE_BYTES = 64 * 1024;
 const ENCODING_MID_SAMPLE_BYTES = 8192;
 
+function encodingFromBom(bytes: Uint8Array): string | undefined {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return 'utf-16le';
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return 'utf-16be';
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return 'utf-8';
+  return undefined;
+}
+
 const escapeXml = (str: string) => {
   if (!str) return '';
   return str
@@ -413,6 +420,8 @@ export class TxtToEpubConverter {
     const headSampleSize = Math.min(file.size, ENCODING_HEAD_SAMPLE_BYTES);
     const headBuffer = await file.slice(0, headSampleSize).arrayBuffer();
     const headSample = new Uint8Array(headBuffer);
+    const bom = encodingFromBom(headSample);
+    if (bom) return bom;
 
     try {
       this.assertStrictUtf8Sample(headSample);
@@ -447,18 +456,6 @@ export class TxtToEpubConverter {
         console.log('Treating as UTF-8 despite some invalid sequences');
         return 'utf-8';
       }
-    }
-
-    if (headSample[0] === 0xff && headSample[1] === 0xfe) {
-      return 'utf-16le';
-    }
-
-    if (headSample[0] === 0xfe && headSample[1] === 0xff) {
-      return 'utf-16be';
-    }
-
-    if (headSample[0] === 0xef && headSample[1] === 0xbb && headSample[2] === 0xbf) {
-      return 'utf-8';
     }
 
     const sample = headSample.slice(0, Math.min(1024, headSample.length));
@@ -1025,6 +1022,8 @@ export class TxtToEpubConverter {
   }
 
   private detectEncoding(buffer: ArrayBuffer): string | undefined {
+    const bom = encodingFromBom(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 3)));
+    if (bom) return bom;
     const utf8HeadSampleSize = Math.min(buffer.byteLength, 64 * 1024);
     const utf8HeadSample = buffer.slice(0, utf8HeadSampleSize);
 
@@ -1064,20 +1063,6 @@ export class TxtToEpubConverter {
         return 'utf-8';
       }
       // If UTF-8 decoding fails, try to detect other encodings
-    }
-
-    const headerBytes = new Uint8Array(buffer.slice(0, 4));
-
-    if (headerBytes[0] === 0xff && headerBytes[1] === 0xfe) {
-      return 'utf-16le';
-    }
-
-    if (headerBytes[0] === 0xfe && headerBytes[1] === 0xff) {
-      return 'utf-16be';
-    }
-
-    if (headerBytes[0] === 0xef && headerBytes[1] === 0xbb && headerBytes[2] === 0xbf) {
-      return 'utf-8';
     }
 
     // Analyze a sample of the content to guess between common East Asian encodings
