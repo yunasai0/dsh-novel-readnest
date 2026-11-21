@@ -44,6 +44,9 @@ try {
     execute() { foreignCalls++; return {}; },
   }));
   registerForeign('foreign_search'); registerForeign('foreign_terminal');
+  registerForeign('subagent'); registerForeign('subagent_fork');
+  const identityText = 'HOST_SUBAGENT_IDENTITY';
+  ctx.systemPrompt.context({ name: 'subagent:identity', order: 100, required: true, text: identityText });
   const presetKey = {};
   const preset = createScope(toolOwner, presetKey); scopes.push(preset);
   await preset.ctx.plugin(novelPlugin).await();
@@ -62,10 +65,17 @@ try {
     const assembly = await ctx.systemPrompt.assemble({ scope: subject, agent: subject });
     assert.deepEqual(assembly.tools.map(tool => tool.name).sort(), expected);
     assert(!JSON.stringify(assembly).includes('UNRELATED_PLUGIN_DESCRIPTION'));
+    assert(!assembly.contexts.some(context => context.name === 'subagent:identity'));
+    if (typeof ctx.systemPrompt.refreshContext === 'function') {
+      const refreshed = ctx.systemPrompt.refreshContext(assembly, { scope: subject, agent: subject });
+      assert(!JSON.stringify(refreshed.contexts).includes(identityText));
+    }
     assert(!assembly.tools.some(tool => tool.name === 'run_code'));
   };
   await verifyCatalog(agent);
-  assert.deepEqual(names(normal), ['foreign_search', 'foreign_terminal']);
+  assert.deepEqual(names(normal), ['foreign_search', 'foreign_terminal', 'subagent', 'subagent_fork']);
+  const ordinaryPrompt = await ctx.systemPrompt.assemble({ scope: normal, agent: normal });
+  assert(ordinaryPrompt.contexts.some(context => context.text === identityText));
   registerForeign('late_plugin_tool');
   await verifyCatalog(agent);
   assert(names(normal).includes('late_plugin_tool'));
@@ -76,9 +86,10 @@ try {
       calls: [{ type: 'tool-call', id: 'call-' + ++call, name, arguments: '{}' }] })
     : ctx.tools.execute({ agent: subject, signal: AbortSignal.timeout(2000),
       callId: 'call-' + ++call, name, arguments: {} });
-  for (const name of ['foreign_search', 'foreign_terminal', 'late_plugin_tool', 'run_code']) {
+  for (const name of ['foreign_search', 'foreign_terminal', 'late_plugin_tool', 'run_code', 'subagent', 'subagent_fork']) {
     assert.equal(ctx.tools.get(name, agent), undefined);
-    await invoke(agent, name);
+    const batch = await invoke(agent, name);
+    assert.equal((modern ? batch.results[0].result : batch).isError, true, name);
   }
   assert.equal(foreignCalls, 0);
   await invoke(agent, 'read_current'); assert.equal(bookCalls, 1);

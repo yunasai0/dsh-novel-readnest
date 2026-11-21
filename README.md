@@ -48,7 +48,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.16"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.17"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -64,16 +64,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.16/dsh-novel-readnest-0.2.0-beta.16.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.17/dsh-novel-readnest-0.2.0-beta.17.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-当前版本为 `v0.2.0-beta.16`。已安装用户可在插件管理中使用本版 Release 安装包更新。DSH Web 可执行上面的安装命令。更新后重启 DSH，再刷新阅读页面。
+当前版本为 `v0.2.0-beta.17`。已安装用户可在插件管理中使用本版 Release 安装包更新。DSH Web 可执行上面的安装命令。更新后重启 DSH，再刷新阅读页面。
 
-更新后可在插件管理中确认版本为 `0.2.0-beta.16`。需要回滚时，使用 [beta.15 安装包与校验文件](https://github.com/yunasai0/dsh-novel-readnest/releases/tag/v0.2.0-beta.15)。
+更新后可在插件管理中确认版本为 `0.2.0-beta.17`。需要回滚到上一版时，可使用 [beta.16 安装包与校验文件](https://github.com/yunasai0/dsh-novel-readnest/releases/tag/v0.2.0-beta.16)。
 
 ### 手机和平板
 

@@ -67,6 +67,15 @@ export function apply(ctx: AgentContext) {
   });
   ctx.effect(() => () => { for (const agent of restrictions.keys()) release(agent); });
   ctx.systemPrompt.suppressRuntimeContext();
+  // Host subagent controls register a required context, which survives ordinary
+  // suppression and is refreshed before model requests. Shadow it in this preset.
+  ctx.systemPrompt.context({
+    name: 'subagent:identity',
+    order: 100,
+    required: false,
+    interpolate: false,
+    text: () => '',
+  });
   ctx.systemPrompt.section({
     name: 'novel-reader-persona',
     order: 100,
