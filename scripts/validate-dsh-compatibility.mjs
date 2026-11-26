@@ -85,7 +85,7 @@ try {
   const skillDir = join(dshHome, 'skills', 'reader-qa-illustration');
   await mkdir(join(skillDir, 'scripts'), { recursive: true });
   await writeFile(join(skillDir, 'SKILL.md'), '---\nname: reader-qa-illustration\ndescription: Illustrated novel fixture\n---\nPaint the requested scene.');
-  await writeFile(join(skillDir, 'scripts', 'ink.py'), '# --prompt and --out-dir fixture');
+  await writeFile(join(skillDir, 'scripts', 'ink.py'), '# "--prompt" and "--output-dir" fixture');
   const post = async (op, extra = {}) => {
     const r = await fetch(new URL('/novel-reader/companion-bridge', url), {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },

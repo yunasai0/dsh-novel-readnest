@@ -10,12 +10,15 @@ export const imageSkillToolName = 'readnest_illustrate';
 export interface ScriptEntry { id: string; label: string; path: string }
 interface ScriptSource { source: string; path?: string; resourceBase?: { kind: string; path?: string } }
 const limit = 256 * 1024;
-async function fileId(path: string) {
+async function inspectScript(path: string) {
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > limit) return;
   const bytes = await readFile(path);
-  if (!bytes.includes('--prompt') || !bytes.includes('--out-dir')) return;
-  return 'script-' + createHash('sha256').update(path).update('\0').update(bytes).digest('hex');
+  const source = bytes.toString('utf8');
+  if (!/['"]--prompt['"]/.test(source)) return;
+  const output = /['"]--out-dir['"]/.test(source) ? '--out-dir' : /['"]--output-dir['"]/.test(source) ? '--output-dir' : undefined;
+  if (!output) return;
+  return { output, id: 'script-' + createHash('sha256').update(path).update('\0').update(bytes).digest('hex') };
 }
 // A workspace can contain untrusted Markdown. Only deliberately installed user skill
 // bundles qualify for executable binding, never project roots, virtual providers or URLs.
@@ -28,8 +31,8 @@ export async function imageScripts(skill: ScriptSource): Promise<ScriptEntry[]> 
   const names = (await readdir(dir, { withFileTypes: true })).filter(f => f.isFile() && /^[\w.-]+\.py$/i.test(f.name)).slice(0, 40);
   const entries = await Promise.all(names.map(async f => {
     const path = join(dir, f.name);
-    const id = await fileId(path).catch(() => undefined);
-    return id ? { id, label: '技能脚本 · ' + f.name, path } : undefined;
+    const entry = await inspectScript(path).catch(() => undefined);
+    return entry ? { id: entry.id, label: '技能脚本 · ' + f.name, path } : undefined;
   }));
   return entries.filter((s): s is ScriptEntry => !!s);
 }
@@ -48,13 +51,14 @@ async function python() {
 }
 export async function renderSkillImage(script: ScriptEntry, prompt: string, signal: AbortSignal) {
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000) throw new Error('画面描述应为 1 至 4000 个字符。');
-  if (await fileId(script.path).catch(() => '') !== script.id) throw new Error('技能脚本已变化，请在陪读技能中重新选择。');
+  const entry = await inspectScript(script.path).catch(() => undefined);
+  if (!entry || entry.id !== script.id) throw new Error('技能脚本已变化，请在陪读技能中重新选择。');
   const interpreter = await python();
   signal.throwIfAborted();
   const out = await mkdtemp(join(tmpdir(), 'readnest-illustration-'));
   try {
     try {
-      await exec(interpreter.path, [...interpreter.args, script.path, '--prompt=' + prompt, '--out-dir=' + out], {
+      await exec(interpreter.path, [...interpreter.args, script.path, '--prompt=' + prompt, entry.output + '=' + out], {
         shell: false, cwd: out, windowsHide: true, signal, timeout: 300_000, maxBuffer: 2 * 1024 * 1024,
       });
     } catch {

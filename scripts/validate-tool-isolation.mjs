@@ -140,7 +140,7 @@ try {
   bind(agent.session.id, skill);
   const assembly = await ctx.systemPrompt.assemble({ scope: agent, agent });
   assert.deepEqual(assembly.tools.map(t => t.name).sort(), [...expected, generator.name].sort());
-  assert(JSON.stringify(assembly.contexts).includes(skill.content));
+  assert.equal(assembly.contexts.find(c => c.name === 'novel-reader-selected-skill')?.text, skill.content);
   await verifyCatalog(resumed);
   assert(!JSON.stringify((await ctx.systemPrompt.assemble({ scope: resumed, agent: resumed })).contexts).includes(skill.content));
   await invoke(agent, generator.name); assert.equal(drawings, 1);
@@ -156,14 +156,17 @@ try {
   const dir = await mkdtemp(join(tmpdir(), 'readnest-test-skill-'));
   try {
     const path = join(dir, 'draw.py');
-    const program = "import argparse,base64,pathlib\np=argparse.ArgumentParser();p.add_argument('--prompt');p.add_argument('--out-dir');a=p.parse_args()\nassert a.prompt=='fixture ; ok'\n(pathlib.Path(a.out_dir)/'image.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF1kAAAAASUVORK5CYII='))\n";
+    const prompt = '街边有间书店。\n保留标点：；“open”';
+    const program = `import argparse,base64,pathlib\np=argparse.ArgumentParser();p.add_argument('--prompt');p.add_argument('--out-dir');a=p.parse_args()\nassert a.prompt == ${JSON.stringify(prompt)}\n(pathlib.Path(a.out_dir)/'image.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF1kAAAAASUVORK5CYII='))\n`;
     await writeFile(path, program);
     const id = 'script-' + createHash('sha256').update(path).update('\0').update(program).digest('hex');
-    bind(agent.session.id, { name: 'any-installed-skill', content: 'SCRIPT_INSTRUCTIONS', script: { id, path } });
+    const instructions = '使用读者的语言，自由描述。';
+    bind(agent.session.id, { name: 'any-installed-skill', content: instructions, script: { id, path } });
     const scriptName = 'readnest_illustrate';
     const allowed = await ctx.systemPrompt.assemble({ scope: agent, agent });
     assert.deepEqual(allowed.tools.map(t => t.name).sort(), [...expected, scriptName].sort());
-    const batch = await invoke(agent, scriptName, undefined, { prompt: 'fixture ; ok' });
+    assert.equal(allowed.contexts.find(c => c.name === 'novel-reader-selected-skill')?.text, instructions);
+    const batch = await invoke(agent, scriptName, undefined, { prompt });
     const result = modern ? batch.results[0].result : batch;
     assert.equal(result.isError, false, JSON.stringify(result));
     assert.equal(images, 1);

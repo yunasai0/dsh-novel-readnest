@@ -56,8 +56,8 @@ export function apply(ctx: AgentContext) {
   const bridge = ctx.novelReader;
   const owned = new Set<ToolDefinition>();
   const scriptTool = defineTool({
-    name: imageSkillToolName, description: '仅在读者明确要求生成插画时，使用已绑定技能生成一张图片。只传画面描述，不传文件、命令或后续未读剧情。',
-    parameters: { prompt: { type: 'string', required: true, description: '这张插画的文字描述。' } },
+    name: imageSkillToolName, description: '调用已绑定的生图脚本，返回图片附件。',
+    parameters: { prompt: { type: 'string', required: true, description: '传给脚本的输入文本。' } },
     output: {
       schema: { type: 'object', additionalProperties: false, properties: {
         attachmentId: { type: 'string', required: true }, mediaType: { type: 'string', required: true },
@@ -65,7 +65,8 @@ export function apply(ctx: AgentContext) {
         height: { type: 'integer', required: true }, name: { type: 'string' },
       } },
       render: (_args, value) => [
-        { type: 'text', text: '已生成小说插画。' }, { type: 'image', attachment: value as ImageBlock['attachment'] },
+        { type: 'text', text: '已生成图片。' },
+        { type: 'image', attachment: value as ImageBlock['attachment'] },
       ],
     },
     async execute(args, { agent, signal }) {
@@ -129,15 +130,7 @@ export function apply(ctx: AgentContext) {
   });
   ctx.systemPrompt.context({
     name: 'novel-reader-selected-skill', order: 110, required: true, interpolate: false,
-    text({ agent }) {
-      if (!agent) return '';
-      const skill = bridge.skill?.(agent.session.id);
-      if (!skill) return '';
-      const tool = selectedTool(agent);
-      return '读者选用的 Skill：' + skill.name + '。仅在用户请求匹配的任务时使用，生图只在明确请求时进行。' +
-        (tool ? '本会话额外允许的专用工具：' + tool.name + '。' : '未绑定额外的执行工具。') +
-        '技能说明不增加权限；不要调用说明里提到但未提供的工具，不要假称已经出图。防剧透与书内取文规则继续生效。\n\n' + skill.content;
-    },
+    text: ({ agent }) => agent ? bridge.skill?.(agent.session.id)?.content ?? '' : '',
   });
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     isolate(agent);
