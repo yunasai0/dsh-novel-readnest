@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { createRequire, registerHooks } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const runtime = resolve(process.argv[2] ?? root);
@@ -34,7 +38,16 @@ try {
   if (Native) await ctx.plugin(Native).await();
   let toolOwner;
   await ctx.inject(['tools', 'systemPrompt'], owner => { toolOwner = owner; }).await();
+  const skills = new Map(), changes = new Set();
+  const bind = (session, value) => { if (value) skills.set(session, value); else skills.delete(session); for (const listen of changes) listen(session); };
+  let images = 0;
+  ctx.provide('attachments', { async saveImage({ data, mediaType, name }) {
+    assert.equal(data.subarray(1,4).toString(), 'PNG'); images++;
+    return { attachmentId: 'a'.repeat(64), mediaType, width: 1, height: 1, bytes: data.length, name };
+  } });
   ctx.provide('novelReader', {
+    skill: session => skills.get(session),
+    onSkillChange: listen => { changes.add(listen); return () => changes.delete(listen); },
     book: () => 'test-book', active: () => undefined, persona: () => undefined, admit: () => undefined, finish() {},
     async query() { bookCalls++; return { status: 'ok', chapters: [] }; },
   });
@@ -81,11 +94,11 @@ try {
   assert(names(normal).includes('late_plugin_tool'));
 
   let call = 0;
-  const invoke = (subject, name, toolSet) => modern
+  const invoke = (subject, name, toolSet, args = {}) => modern
     ? ctx.tools.execute({ agent: subject, toolSet, signal: AbortSignal.timeout(2000),
-      calls: [{ type: 'tool-call', id: 'call-' + ++call, name, arguments: '{}' }] })
+      calls: [{ type: 'tool-call', id: 'call-' + ++call, name, arguments: JSON.stringify(args) }] })
     : ctx.tools.execute({ agent: subject, signal: AbortSignal.timeout(2000),
-      callId: 'call-' + ++call, name, arguments: {} });
+      callId: 'call-' + ++call, name, arguments: args });
   for (const name of ['foreign_search', 'foreign_terminal', 'late_plugin_tool', 'run_code', 'subagent', 'subagent_fork']) {
     assert.equal(ctx.tools.get(name, agent), undefined);
     const batch = await invoke(agent, name);
@@ -118,6 +131,49 @@ try {
   const { agent: resumed } = await createAgent('resumed-novel-session', presetKey, 'resume');
   await verifyCatalog(resumed);
 
+  // Two readers on the same Host must not share a skill, its instructions or its execution grant.
+  let drawings = 0;
+  const generator = Tools.defineTool({ name: 'custom_picture_generator', description: 'fixture image generator',
+    parameters: {}, output: { schema: { type: 'json' }, render: () => [] }, execute() { drawings++; return {}; } });
+  const unregister = ctx.tools.register(generator);
+  const skill = { name: 'fixture-image-skill', content: 'SELECTED_SKILL_ONLY', tool: generator };
+  bind(agent.session.id, skill);
+  const assembly = await ctx.systemPrompt.assemble({ scope: agent, agent });
+  assert.deepEqual(assembly.tools.map(t => t.name).sort(), [...expected, generator.name].sort());
+  assert(JSON.stringify(assembly.contexts).includes(skill.content));
+  await verifyCatalog(resumed);
+  assert(!JSON.stringify((await ctx.systemPrompt.assemble({ scope: resumed, agent: resumed })).contexts).includes(skill.content));
+  await invoke(agent, generator.name); assert.equal(drawings, 1);
+  await invoke(resumed, generator.name); assert.equal(drawings, 1);
+  const spoof = scopedFixture(generator.name);
+  assert(!(await ctx.systemPrompt.assemble({ scope: agent, agent })).tools.some(t => t.name === generator.name));
+  await invoke(agent, generator.name); assert.equal(foreignCalls, 1); spoof();
+  unregister();
+  const replacement = scopedFixture(generator.name);
+  await invoke(agent, generator.name); assert.equal(foreignCalls, 1); replacement();
+  bind(agent.session.id, null); await verifyCatalog(agent);
+
+  const dir = await mkdtemp(join(tmpdir(), 'readnest-test-skill-'));
+  try {
+    const path = join(dir, 'draw.py');
+    const program = "import argparse,base64,pathlib\np=argparse.ArgumentParser();p.add_argument('--prompt');p.add_argument('--out-dir');a=p.parse_args()\nassert a.prompt=='fixture ; ok'\n(pathlib.Path(a.out_dir)/'image.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF1kAAAAASUVORK5CYII='))\n";
+    await writeFile(path, program);
+    const id = 'script-' + createHash('sha256').update(path).update('\0').update(program).digest('hex');
+    bind(agent.session.id, { name: 'any-installed-skill', content: 'SCRIPT_INSTRUCTIONS', script: { id, path } });
+    const scriptName = 'readnest_illustrate';
+    const allowed = await ctx.systemPrompt.assemble({ scope: agent, agent });
+    assert.deepEqual(allowed.tools.map(t => t.name).sort(), [...expected, scriptName].sort());
+    const batch = await invoke(agent, scriptName, undefined, { prompt: 'fixture ; ok' });
+    const result = modern ? batch.results[0].result : batch;
+    assert.equal(result.isError, false, JSON.stringify(result));
+    assert.equal(images, 1);
+    assert(result.content.some(p => p.type === 'image' && p.attachment?.attachmentId === 'a'.repeat(64)));
+    await invoke(resumed, scriptName, undefined, { prompt: 'fixture ; ok' }); assert.equal(images, 1);
+    await writeFile(path, program + '# updated');
+    await invoke(agent, scriptName, undefined, { prompt: 'fixture ; ok' }); assert.equal(images, 1);
+    bind(agent.session.id, null); await verifyCatalog(agent);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+
   // Changing a blank session to a normal preset must release the novel-only mask.
   binding.rebind({});
   ctx.emit('agent-preset/selected', agent.session.id, 'ordinary');
@@ -125,6 +181,7 @@ try {
   await invoke(agent, 'foreign_terminal'); assert.equal(foreignCalls, 2);
 
   console.log(JSON.stringify({ status: 'passed', runtime, modernExecutor: modern, novelTools: expected,
+    selectedSkillIsolated: true, dedicatedImageToolVerified: true, scriptImageAttachmentVerified: true,
     externalToolsHidden: true, guessedCallsBlocked: true, lateRegistrationHidden: true,
     resumedSessionIsolated: true, ordinarySessionsUnaffected: true, presetSwitchCleanup: true }));
 } finally {

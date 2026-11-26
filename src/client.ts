@@ -1,4 +1,5 @@
 import { createElement, type ComponentType } from 'react';
+import { SkillImageCard } from './skill-image-card.js';
 import {
   conversationSlot, NovelConversation, ReaderPanel, type PanelSlots, type SessionServices,
 } from './companion-panel.js';
@@ -34,6 +35,8 @@ export const inject = ['slots', 'sessions', 'workspaces'];
 
 export function apply(ctx: { slots: Slots } & SessionServices) {
   const { slots } = ctx;
+  slots.inject('tool.call.toolview', () =>
+    slots.register({ name: 'tool.call.toolview', key: 'readnest_illustrate' }, SkillImageCard));
   slots.inject('main', () => slots.register({
     name: 'main', key: id, children: { [conversationSlot]: { kind: 'single', scope: 'session' } },
   }, (props: PanelSlots) => createElement(ReaderPanel, { ...props, services: ctx })));

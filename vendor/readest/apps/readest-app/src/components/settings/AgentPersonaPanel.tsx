@@ -13,6 +13,8 @@ import {
   type NovelPersonaSettings,
 } from '@dsh-reader/persona';
 import BoxedList from './primitives/BoxedList';
+import AgentSkillSettings from './AgentSkillSettings';
+import { saveSkill } from '@dsh-reader/skill-choice';
 
 const defaultName = '默认小说伴读';
 
@@ -87,6 +89,7 @@ export default function AgentPersonaPanel() {
     const personas = latest.personas.filter((item) => item.id !== id);
     const activeId = latest.activeId === id ? defaultPersonaId : latest.activeId;
     if (persist({ activeId, personas })) {
+      saveSkill(draft.id, null);
       setDraft(undefined);
       setConfirmDelete(false);
     }
@@ -132,6 +135,7 @@ export default function AgentPersonaPanel() {
           )}
         </div>
       </BoxedList>
+      {!draft && <AgentSkillSettings key={settings.activeId} personaId={settings.activeId} personaName={active?.name ?? defaultName} />}
       {draft ? (
         <BoxedList title={draft.id ? '编辑人设' : '新建人设'} innerClassName='px-4'>
           <form className='space-y-3 py-4' onSubmit={save}>

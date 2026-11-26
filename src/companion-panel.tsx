@@ -8,6 +8,7 @@ import {
   type BookPoll, type ReaderBook, type ReaderResult, type ReadingLocation, type ReadingSnapshot, type SyncState,
 } from './protocol.js';
 import { companionStyle } from './companion-style.js';
+import { savedSkill, skillStoragePrefix, type SkillChoice } from './skill-choice.js';
 import {
   defaultPersonaId, personaStorageKey, readNovelPersonaSettings,
   selectedNovelPersona, writeNovelPersonaSettings,
@@ -148,6 +149,7 @@ function NativeSession({
   const protection = useRef(protectedReading);
   protection.current = protectedReading;
   const [reference, setReference] = useState<SessionReference>();
+  const [skillWarning, setSkillWarning] = useState('');
   const [error, setError] = useState('');
   const syncProtection = useRef<() => Promise<unknown> | undefined>(undefined);
   const pendingQuote = useRef(quoteSnapshot);
@@ -182,16 +184,36 @@ function NativeSession({
         const value = await response.json().catch(() => null) as { message?: string } | null;
         return { rejected: response.status, message: value?.message };
       }
-      if (!response.ok) throw new Error('阅读器桥接请求失败（' + response.status + '）');
+      if (!response.ok) {
+        const reason = op.startsWith('skill-') ? await response.json().catch(() => null) : null;
+        throw new Error(reason?.message ?? '阅读器桥接请求失败（' + response.status + '）');
+      }
       return response.json();
     };
+    let previouslySelected = false;
+    const select = async (choice: SkillChoice | null, id?: string) => {
+      previouslySelected = !!choice;
+      await post('skill-select', { choice, id }, AbortSignal.any([signal, AbortSignal.timeout(6500)]));
+    };
+    const restoreSkill = async (choice: SkillChoice | undefined, id: string) => {
+      if (!choice && !previouslySelected) return;
+      try { await select(choice ?? null, choice ? id : undefined); if (!signal.aborted) setSkillWarning(''); }
+      catch (e) { if (!signal.aborted) setSkillWarning(e instanceof Error ? e.message : '技能未启用。'); }
+    };
+    const onChoiceChanged = (event: StorageEvent) => {
+      if (previouslySelected && (event.key === personaStorageKey || event.key === skillStoragePrefix + readNovelPersonaSettings().activeId || event.key === null))
+        void select(null).catch(() => {});
+    };
+    window.addEventListener('storage', onChoiceChanged);
     const updateProtection = () => post('protection', { protectedReading: protection.current });
     const capture = () => {
       const quote = pendingQuote.current === visibleQuote.current ? pendingQuote.current : undefined;
       pendingQuote.current = undefined;
+      const settings = readNovelPersonaSettings();
       return {
         protectedReading: protection.current,
-        persona: selectedNovelPersona(readNovelPersonaSettings())?.prompt,
+        persona: selectedNovelPersona(settings)?.prompt,
+        skill: savedSkill(settings.activeId),
         quote,
         snapshot: askReader<ReadingSnapshot>(
           frame, book, 'book-snapshot', { id: crypto.randomUUID(), quoteSnapshot: quote }, signal, 1500,
@@ -262,6 +284,8 @@ function NativeSession({
           abort.throwIfAborted();
           const quoteText = !prepared && content.length ? captured?.quote?.selection?.text : undefined;
           const delivered = quoteText ? [...content, { type: 'text', text: '用户引用的原文：\n' + quoteText }] : content;
+          await restoreSkill(captured ? captured.skill : savedSkill(readNovelPersonaSettings().activeId), id);
+          abort.throwIfAborted();
           const result = await originalPrompt.call(this, delivered, mode, abort, id);
           accepted = result.ok;
           if (accepted) {
@@ -270,6 +294,7 @@ function NativeSession({
           }
           return result;
         } finally {
+          if (!accepted && previouslySelected) void post('skill-select', { choice: null, id }, AbortSignal.timeout(2500)).catch(() => {});
           if (!accepted && prepared) void post('withdraw', { id }).catch(() => {});
           if (!accepted && captured?.quote && visibleQuote.current === captured.quote && !pendingQuote.current) {
             pendingQuote.current = captured.quote;
@@ -324,6 +349,7 @@ function NativeSession({
     });
     return () => {
       lifetime.abort();
+      window.removeEventListener('storage', onChoiceChanged);
       if (syncProtection.current === updateProtection) syncProtection.current = undefined;
       restore?.();
       void post('close', {}, AbortSignal.timeout(2500)).catch(() => {});
@@ -335,6 +361,7 @@ function NativeSession({
   if (!reference) return <p className="nr-message">正在打开 AI 会话…</p>;
   return (
     <slots.SessionProvider session={reference}>
+      {skillWarning && <p className="nr-error" role="status">技能未就绪：{skillWarning}</p>}
       {slots.renderSlot(conversationSlot, { view })}
     </slots.SessionProvider>
   );

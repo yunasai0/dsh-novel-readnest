@@ -13,8 +13,11 @@ import { createBookBridge, type BookBridge } from './book-bridge.js';
 import type { NovelSession } from './reading-history.js';
 import { companionEndpoint } from './protocol.js';
 import { readLimitedBody } from './request-body.js';
+import { installedSkills, type SkillHost } from './installed-skills.js';
+import { skillCatalogEndpoint } from './skill-choice.js';
 
 interface HostContext {
+  get?<K extends keyof SkillHost>(key: K): SkillHost[K];
   agents: { get(id: string): { session: NovelSession } | undefined };
   provide(name: string, value: BookBridge): () => void;
   effect(activate: () => () => void): void;
@@ -107,7 +110,13 @@ export const inject = ['webServer', 'connection', 'agents'];
 
 export function apply(ctx: HostContext) {
   ctx.effect(() => {
-    const bridge = createBookBridge((id) => ctx.agents.get(id)?.session);
+    const skills = installedSkills({
+      get skills() { return ctx.get?.('skills'); },
+      get agentPresets() { return ctx.get?.('agentPresets'); },
+      get workingDirectory() { return ctx.get?.('workingDirectory'); },
+      get tools() { return ctx.get?.('tools'); },
+    });
+    const bridge = createBookBridge((id) => ctx.agents.get(id)?.session, skills);
     ctx.provide('novelReader', bridge);
 
     const handleReaderRequest = async (req: IncomingMessage, res: ServerResponse) => {
@@ -119,6 +128,23 @@ export function apply(ctx: HostContext) {
 
       try {
         const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        // Human-only configuration surface; listing does not register or grant a tool.
+        if (url.pathname === skillCatalogEndpoint) {
+          res.setHeader('cache-control', 'no-store');
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          try {
+            if (req.method === 'GET') { res.end(JSON.stringify(await skills.catalog())); return; }
+            if (req.method !== 'POST') { res.writeHead(405, { Allow: 'GET, POST' }).end(); return; }
+            if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415).end(); return; }
+            const body = await readLimitedBody(req, 2048);
+            if (!body) { res.writeHead(body === null ? 413 : 400).end(); return; }
+            const { op, choice } = JSON.parse(body);
+            if (op === 'scripts') { res.end(JSON.stringify(await skills.scripts(choice))); return; }
+            if (op === 'check') { await skills.resolve(choice); res.end('null'); return; }
+            res.writeHead(400).end();
+          } catch (e) { res.writeHead(422).end(JSON.stringify({ message: e instanceof Error ? e.message : '技能目录暂不可用。' })); }
+          return;
+        }
         if (url.pathname === companionEndpoint) {
           await bridge.handle(req, res);
           return;

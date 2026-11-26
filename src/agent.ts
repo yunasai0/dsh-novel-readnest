@@ -7,6 +7,8 @@ import { novelError, directoryRecovery } from './novel-errors.js';
 import { spoilerBoundaryOf } from './reading-progress.js';
 import { installReadingToolPolicy, type ReadingToolPolicyContext } from './reading-tool-policy.js';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
+import type { ImageBlock } from '@deepseek-ai/dsh-llm';
+import { imageSkillToolName, renderSkillImage } from './skill-image-runner.js';
 
 export const name = 'novel-reader-agent';
 export const inject = ['novelReader', 'tools', 'systemPrompt'];
@@ -15,12 +17,13 @@ type Agent = { session: NovelSession; ctx: { tools: { restrict(filter: { allow: 
 type UserMessage = { source?: { kind?: string; rpcId?: string } };
 type Step = { kind: 'reject' } | { kind: 'enter'; messages: UserMessage[] };
 interface AgentContext {
+  get?(name: 'attachments'): { saveImage(input: Awaited<ReturnType<typeof renderSkillImage>>): Promise<ImageBlock['attachment']> } | undefined;
   novelReader: BookBridge;
   tools: ReadingToolPolicyContext['tools'] & {
     register(definition: ReturnType<typeof defineTool>): () => void;
   };
   effect(activate: () => () => void): void;
-  systemPrompt: {
+  systemPrompt: NonNullable<ReadingToolPolicyContext['systemPrompt']> & {
     section(spec: { name: string; order: number; complete: boolean; interpolate: boolean;
       text(input: { agent?: Agent }): string }): () => void;
     suppressRuntimeContext(): () => void;
@@ -52,13 +55,54 @@ function modelResult(result: BookResult & { source?: unknown }) {
 export function apply(ctx: AgentContext) {
   const bridge = ctx.novelReader;
   const owned = new Set<ToolDefinition>();
-  const restrictions = new Map<Agent, () => void>();
-  const isolate = (agent: Agent) => {
-    if (!restrictions.has(agent)) restrictions.set(agent, agent.ctx.tools.restrict({ allow: [...novelToolNames] }));
+  const scriptTool = defineTool({
+    name: imageSkillToolName, description: '仅在读者明确要求生成插画时，使用已绑定技能生成一张图片。只传画面描述，不传文件、命令或后续未读剧情。',
+    parameters: { prompt: { type: 'string', required: true, description: '这张插画的文字描述。' } },
+    output: {
+      schema: { type: 'object', additionalProperties: false, properties: {
+        attachmentId: { type: 'string', required: true }, mediaType: { type: 'string', required: true },
+        bytes: { type: 'integer', required: true }, width: { type: 'integer', required: true },
+        height: { type: 'integer', required: true }, name: { type: 'string' },
+      } },
+      render: (_args, value) => [
+        { type: 'text', text: '已生成小说插画。' }, { type: 'image', attachment: value as ImageBlock['attachment'] },
+      ],
+    },
+    async execute(args, { agent, signal }) {
+      const id = agent?.session.id;
+      const script = id && bridge.skill?.(id)?.script;
+      const attachments = ctx.get?.('attachments');
+      if (!id || !script || !bridge.book(id) || !attachments) throw new Error('当前书籍未绑定可执行的生图技能。');
+      if (!keysOnly(args, ['prompt']) || typeof args['prompt'] !== 'string') throw new Error('只接受文字画面描述。');
+      const result = await renderSkillImage(script, args['prompt'], signal);
+      signal.throwIfAborted();
+      if (bridge.skill?.(id)?.script?.id !== script.id) throw new Error('技能已停用或切换。');
+      const { attachmentId, mediaType, bytes, width, height, name } = await attachments.saveImage(result);
+      return { attachmentId, mediaType, bytes, width, height, ...(name ? { name } : {}) };
+    },
+  });
+  ctx.tools.register(scriptTool);
+  const restrictions = new Map<Agent, { tool?: ToolDefinition; dispose(): void }>();
+  const selectedTool = (agent: Agent) => {
+    const skill = bridge.skill?.(agent.session.id);
+    if (skill?.script && ctx.get?.('attachments')) return scriptTool;
+    const tool = skill?.tool;
+    return tool && ctx.tools.get(tool.name) === tool ? tool : undefined;
   };
-  const release = (agent: Agent) => { restrictions.get(agent)?.(); restrictions.delete(agent); };
+  const isolate = (agent: Agent) => {
+    const tool = selectedTool(agent);
+    const old = restrictions.get(agent);
+    if (old && old.tool === tool) return;
+    const dispose = agent.ctx.tools.restrict({ allow: [...novelToolNames, ...(tool ? [tool.name] : [])] });
+    old?.dispose();
+    restrictions.set(agent, { tool, dispose });
+  };
+  const release = (agent: Agent) => { restrictions.get(agent)?.dispose(); restrictions.delete(agent); };
   // Mask inherited tools before any model step, including resumed sessions.
   ctx.on('agent/created', ({ agent }) => isolate(agent));
+  ctx.effect(() => bridge.onSkillChange?.(session => {
+    for (const agent of restrictions.keys()) if (agent.session.id === session) isolate(agent);
+  }) ?? (() => {}));
   ctx.on('agent/disposed', ({ agent }) => release(agent));
   ctx.on('agent-preset/selected', (sessionId, preset) => {
     if (preset !== companionPreset) for (const agent of restrictions.keys()) {
@@ -83,6 +127,18 @@ export function apply(ctx: AgentContext) {
     interpolate: false,
     text: ({ agent }) => assembleNovelPrompt(agent ? bridge.persona(agent.session.id) : undefined),
   });
+  ctx.systemPrompt.context({
+    name: 'novel-reader-selected-skill', order: 110, required: true, interpolate: false,
+    text({ agent }) {
+      if (!agent) return '';
+      const skill = bridge.skill?.(agent.session.id);
+      if (!skill) return '';
+      const tool = selectedTool(agent);
+      return '读者选用的 Skill：' + skill.name + '。仅在用户请求匹配的任务时使用，生图只在明确请求时进行。' +
+        (tool ? '本会话额外允许的专用工具：' + tool.name + '。' : '未绑定额外的执行工具。') +
+        '技能说明不增加权限；不要调用说明里提到但未提供的工具，不要假称已经出图。防剧透与书内取文规则继续生效。\n\n' + skill.content;
+    },
+  });
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     isolate(agent);
     const decision = await next();
@@ -91,6 +147,7 @@ export function apply(ctx: AgentContext) {
     const user = decision.messages.find(({ source }) => source?.kind === 'user' || source?.kind === 'retry');
     if (!user) return decision;
     const rpcId = user.source?.rpcId;
+    bridge.confirmSkill?.(session.id, rpcId, turn);
     const active = rpcId ? bridge.admit(session.id, rpcId, turn, user.source?.kind === 'retry') : undefined;
     // A reading snapshot enables tools; it is never a condition for talking.
     // Clear a stale turn rather than using its position for a context-free message.
@@ -98,7 +155,10 @@ export function apply(ctx: AgentContext) {
     return decision;
   });
   ctx.on('session/event', (session, event) => {
-    if (event.type === 'turn/end') bridge.finish(session.id, event.data.turn);
+    if (event.type === 'turn/end') {
+      bridge.endSkillTurn?.(session.id, event.data.turn);
+      bridge.finish(session.id, event.data.turn);
+    }
   });
   ctx.systemPrompt.context({
     name: 'novel-reader-position',
@@ -224,5 +284,6 @@ export function apply(ctx: AgentContext) {
   }, (args) => keysOnly(args, ['cursor']) && typeof args['cursor'] === 'string' && !!args['cursor'].trim() && args['cursor'].length <= 160
     ? { cursor: args['cursor'] } : undefined,
     '只传一个非空 cursor 字符串，原样复制上次返回值。没有游标时重新调用原来的读取工具，不要自行拼接。');
-  return installReadingToolPolicy(ctx, owned);
+  return installReadingToolPolicy(ctx, owned, scope =>
+    scope && restrictions.has(scope as Agent) ? selectedTool(scope as Agent) : undefined);
 }

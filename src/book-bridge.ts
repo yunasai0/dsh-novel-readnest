@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { BoundSkill, installedSkills } from './installed-skills.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { companionRequestBodyLimit, roundBookBudget, type BookPoint, type BookPoll, type BookQuery,
   type BookRequest, type BookResult, type BookToolQuery, type ReadTask, type ReaderResult,
@@ -22,6 +23,7 @@ interface Active extends Prepared {
 }
 interface Pending { request: BookRequest; delivered: boolean; finish(result: ReaderResult): void }
 interface Reader {
+  skill?: BoundSkill; skillRequest?: object; skillMessage?: string; skillTurn?: number;
   book: string; token: string; instance: string; indexVersion: number;
   protectedReading: boolean; lastSeen: number; prepared?: Prepared; active?: Active; retry?: Prepared;
   pending: Map<string, Pending>; cursors: Map<string, ReadTask>;
@@ -65,13 +67,21 @@ const compactSnapshot = (snapshot: ReadingSnapshot): ReadingSnapshot => {
 
 export function createBookBridge(
   sessionOf: (id: string) => NovelSession | undefined = () => undefined,
+  skills?: ReturnType<typeof installedSkills>,
 ) {
   const readers = new Map<string, Reader>();
+  const skillListeners = new Set<(session: string) => void>();
+  function updateSkill(session: string, reader: Reader, next?: BoundSkill) {
+    reader.skill = next;
+    for (const listen of skillListeners) listen(session);
+  }
   let disposed = false;
   function stateOf(session: string, reader: Reader) {
     return readingSyncState(sessionOf(session), reader.book, reader.indexVersion);
   }
-  function clearReader(reader: Reader) {
+  function clearReader(reader: Reader, session: string) {
+    reader.skillRequest = undefined;
+    updateSkill(session, reader);
     reader.poll?.(null);
     for (const pending of reader.pending.values()) pending.finish(unavailable());
     reader.active = undefined; reader.prepared = undefined; reader.retry = undefined;
@@ -234,6 +244,21 @@ export function createBookBridge(
   }
 
   return {
+    skill(session: string) { return live(session)?.skill; },
+    confirmSkill(session: string, id: string | undefined, turn: number) {
+      const reader = live(session);
+      if (!reader?.skill) return;
+      if (id && reader.skillMessage === id) reader.skillTurn = turn;
+      else updateSkill(session, reader);
+    },
+    endSkillTurn(session: string, turn?: number) {
+      const reader = readers.get(session);
+      if (reader?.skill && reader.skillTurn === turn) updateSkill(session, reader);
+    },
+    onSkillChange(listen: (session: string) => void) {
+      skillListeners.add(listen);
+      return () => { skillListeners.delete(listen); };
+    },
     active(session: string) { return live(session)?.active; },
     state(session: string): SyncState {
       const reader = live(session);
@@ -318,7 +343,7 @@ export function createBookBridge(
       }
       let reader = readers.get(session);
       if (op === 'hello' && (!reader || (reader.book === book && reader.token === token && reader.instance !== instance))) {
-        if (reader) clearReader(reader);
+        if (reader) clearReader(reader, session);
         reader = { book, token, instance, indexVersion: integer(body.indexVersion) ? body.indexVersion : 0, protectedReading: body.protectedReading !== false, lastSeen: Date.now(),
           pending: new Map(), cursors: new Map() };
         readers.set(session, reader);
@@ -328,10 +353,30 @@ export function createBookBridge(
         return;
       }
       reader.lastSeen = Date.now();
+      if (op === 'skill-select') {
+        if (body.choice != null && (typeof id !== 'string' || !identity.test(id))) { json(res, 400, null); return; }
+        if (body.choice == null && id && reader.skillMessage !== id) { json(res, 200, null); return; }
+        const request = {};
+        reader.skillRequest = request;
+        reader.skillMessage = id;
+        reader.skillTurn = undefined;
+        updateSkill(session, reader);
+        if (body.choice == null) { json(res, 200, null); return; }
+        try {
+          if (!skills) throw new Error('技能服务不可用。');
+          const binding = await skills.resolve(body.choice, sessionOf(session));
+          if (readers.get(session) !== reader || reader.skillRequest !== request) { json(res, 409, null); return; }
+          updateSkill(session, reader, binding);
+          json(res, 200, null);
+        } catch (error) {
+          json(res, 422, { message: error instanceof Error ? error.message : '技能服务暂不可用。' });
+        }
+        return;
+      }
       if (op === 'state') { json(res, 200, stateOf(session, reader)); return; }
       if (reader.prepared && reader.prepared.expires < reader.lastSeen) reader.prepared = undefined;
       if (op === 'close') {
-        clearReader(reader);
+        clearReader(reader, session);
         readers.delete(session);
         json(res, 200, null);
         return;
@@ -421,7 +466,8 @@ export function createBookBridge(
 
     dispose() {
       disposed = true;
-      for (const reader of readers.values()) clearReader(reader);
+      for (const [id, reader] of readers) clearReader(reader, id);
+      skillListeners.clear();
       readers.clear();
     },
   };
