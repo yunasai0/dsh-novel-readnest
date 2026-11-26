@@ -15,7 +15,7 @@
 - Agent 主动调用工具读取当前片段、同步新增阅读内容，或按原书章号、章节 ID 查询正文；所有正文工具共享每轮 30,000 字符额度。开启防剧透后，读取截止于发送消息时本书已记录的最远阅读位置，回翻不缩小可查范围。
 - 内置默认人设和可编辑的「大肥鱼」人设，可在设置或会话顶部切换，从下一条消息生效。
 
-### 使用你自己安装的 Skill（技能预览版）
+### 使用你自己安装的 Skill
 
 打开 **设置 → Agent 预设**，选择人设，在「陪读技能」中从自动检测到的 Skills 里选一项，再点「保存技能设置」。无需先打开一本书。目录来自当前 DSH；安装新技能后可点「重新检测」。插件包不包含个人技能、登录凭据或生图服务地址。每个人设在当前浏览器独立保存选择，从下一次发送消息生效。没有选择时仍只提供六个阅读工具。
 
@@ -58,7 +58,7 @@
 ### DSH Web
 
 ```sh
-dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.17"
+dsh plugin --profile web add "github:yunasai0/dsh-novel-readnest#v0.2.0-beta.18"
 ```
 
 完成安装后，按 DSH 提示重启 Web 服务，刷新页面，从侧边栏「小说阅读」进入。
@@ -74,16 +74,16 @@ https://github.com/yunasai0/dsh-novel-readnest
 也可以在添加插件时填写 Release 附件的下载地址。Web 与桌面版使用同一份通用包。
 
 ```text
-https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.17/dsh-novel-readnest-0.2.0-beta.17.tgz
+https://github.com/yunasai0/dsh-novel-readnest/releases/download/v0.2.0-beta.18/dsh-novel-readnest-0.2.0-beta.18.tgz
 ```
 
 下载与校验文件见 [Releases](https://github.com/yunasai0/dsh-novel-readnest/releases)。
 
 ### 升级到最新版本
 
-当前版本为 `v0.2.0-beta.17`。已安装用户可在插件管理中使用本版 Release 安装包更新。DSH Web 可执行上面的安装命令。更新后重启 DSH，再刷新阅读页面。
+当前版本为 `v0.2.0-beta.18`。已安装用户可在插件管理中使用本版 Release 安装包更新。DSH Web 可执行上面的安装命令。更新后重启 DSH，再刷新阅读页面。
 
-更新后可在插件管理中确认版本为 `0.2.0-beta.17`。需要回滚到上一版时，可使用 [beta.16 安装包与校验文件](https://github.com/yunasai0/dsh-novel-readnest/releases/tag/v0.2.0-beta.16)。
+更新后可在插件管理中确认版本为 `0.2.0-beta.18`。需要回滚到上一版时，可使用 [beta.17 安装包与校验文件](https://github.com/yunasai0/dsh-novel-readnest/releases/tag/v0.2.0-beta.17)。
 
 ### 手机和平板
 
